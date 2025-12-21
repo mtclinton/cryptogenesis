@@ -6,11 +6,11 @@ Transaction and script system
 """
 
 import struct
-from typing import List, Optional
-from uint256 import uint256, uint160
-from serialize import DataStream, SER_NETWORK, get_serialize_size
-from crypto import double_sha256, hash_to_uint256
+from typing import List
 
+from crypto import double_sha256, hash_to_uint256
+from serialize import DataStream
+from uint256 import uint256
 
 # Constants
 COIN = 100000000
@@ -137,58 +137,58 @@ SIGHASH_ANYONECANPAY = 0x80
 
 class OutPoint:
     """Reference to a transaction output"""
-    
+
     def __init__(self, hash_tx: uint256 = None, n: int = 0):
         self.hash = hash_tx if hash_tx else uint256(0)
         self.n = n
-    
+
     def set_null(self):
         """Set to null"""
         self.hash = uint256(0)
         self.n = -1
-    
+
     def is_null(self) -> bool:
         """Check if null"""
         return self.hash == uint256(0) and self.n == -1
-    
+
     @property
     def is_null_prop(self) -> bool:
         """Property version of is_null()"""
         return self.is_null()
-    
-    def serialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+
+    def serialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Serialize to stream"""
         stream.write(self.hash.to_bytes())
         # Handle -1 (null) as 0xFFFFFFFF (max unsigned int)
         n_value = self.n if self.n >= 0 else 0xFFFFFFFF
-        stream.write(struct.pack('<I', n_value))
-    
-    def unserialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+        stream.write(struct.pack("<I", n_value))
+
+    def unserialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Unserialize from stream"""
         self.hash = hash_to_uint256(stream.read(32))
-        n_value = struct.unpack('<I', stream.read(4))[0]
+        n_value = struct.unpack("<I", stream.read(4))[0]
         # Convert 0xFFFFFFFF back to -1 (null)
         self.n = -1 if n_value == 0xFFFFFFFF else n_value
-    
+
     def __eq__(self, other):
         return isinstance(other, OutPoint) and self.hash == other.hash and self.n == other.n
-    
+
     def __hash__(self):
         return hash((self.hash, self.n))
-    
+
     def __str__(self):
         return f"OutPoint({self.hash.get_hex()[:12]}, {self.n})"
-    
+
     def __repr__(self):
         return f"OutPoint(hash={self.hash.get_hex()[:12]}, n={self.n})"
 
 
 class Script:
     """Bitcoin script"""
-    
+
     def __init__(self, data: bytes = None):
         self.data = bytearray(data) if data else bytearray()
-    
+
     def __add__(self, other):
         """Concatenate scripts"""
         result = Script()
@@ -197,7 +197,7 @@ class Script:
         elif isinstance(other, (bytes, bytearray)):
             result.data = self.data + bytearray(other)
         return result
-    
+
     def __iadd__(self, other):
         """In-place concatenation"""
         if isinstance(other, Script):
@@ -205,10 +205,10 @@ class Script:
         elif isinstance(other, (bytes, bytearray)):
             self.data.extend(other)
         return self
-    
+
     def push_int(self, n: int, force_bignum: bool = False):
         """Push integer to script (using CBigNum encoding)
-        
+
         Args:
             n: Integer to push
             force_bignum: If True, always use bignum encoding (like CBigNum)
@@ -228,14 +228,14 @@ class Script:
                 else:
                     abs_n = n
                     neg = False
-                
+
                 # Convert to little-endian bytes, removing leading zeros
                 bytes_data = bytearray()
                 temp = abs_n
                 while temp > 0:
-                    bytes_data.append(temp & 0xff)
+                    bytes_data.append(temp & 0xFF)
                     temp >>= 8
-                
+
                 # Handle sign bit for negative numbers
                 if neg:
                     # Set sign bit on last byte
@@ -244,147 +244,115 @@ class Script:
                     else:
                         # Need to add a zero byte if MSB is already set
                         bytes_data.append(0x80)
-                
+
                 # Push data with length prefix
                 if len(bytes_data) < OP_PUSHDATA1:
                     self.data.append(len(bytes_data))
                     self.data.extend(bytes_data)
-                elif len(bytes_data) <= 0xff:
+                elif len(bytes_data) <= 0xFF:
                     self.data.append(OP_PUSHDATA1)
                     self.data.append(len(bytes_data))
                     self.data.extend(bytes_data)
                 else:
                     self.data.append(OP_PUSHDATA2)
-                    self.data.extend(struct.pack('<H', len(bytes_data)))
+                    self.data.extend(struct.pack("<H", len(bytes_data)))
                     self.data.extend(bytes_data)
-    
+
     def push_data(self, data: bytes):
         """Push data to script"""
         if len(data) < OP_PUSHDATA1:
             self.data.append(len(data))
             self.data.extend(data)
-        elif len(data) <= 0xff:
+        elif len(data) <= 0xFF:
             self.data.append(OP_PUSHDATA1)
             self.data.append(len(data))
             self.data.extend(data)
         else:
             self.data.append(OP_PUSHDATA2)
-            self.data.extend(struct.pack('<H', len(data)))
+            self.data.extend(struct.pack("<H", len(data)))
             self.data.extend(data)
-    
+
     def push_opcode(self, opcode: int):
         """Push opcode to script"""
         if opcode <= OP_SINGLEBYTE_END:
             self.data.append(opcode)
         else:
             # Multi-byte opcode
-            self.data.append((opcode >> 8) & 0xff)
-            self.data.append(opcode & 0xff)
-    
-    def serialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+            self.data.append((opcode >> 8) & 0xFF)
+            self.data.append(opcode & 0xFF)
+
+    def serialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Serialize to stream"""
         from serialize import write_compact_size
+
         write_compact_size(stream.vch, len(self.data))
         stream.write(bytes(self.data))
-    
-    def unserialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+
+    def unserialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Unserialize from stream"""
         from serialize import read_compact_size
+
         size, _ = read_compact_size(stream.vch, stream.n_read_pos)
         stream.n_read_pos += get_size_of_compact_size(size)
         self.data = bytearray(stream.read(size))
-    
+
     def __str__(self):
         return self.data.hex()
-    
+
     def __len__(self):
         return len(self.data)
 
 
 class TxIn:
     """Transaction input"""
-    
-    def __init__(self, prevout: 'OutPoint' = None, script_sig: 'Script' = None, sequence: int = 0xffffffff):
+
+    def __init__(
+        self, prevout: "OutPoint" = None, script_sig: "Script" = None, sequence: int = 0xFFFFFFFF
+    ):
         self.prevout = prevout if prevout else OutPoint()
         self.script_sig = script_sig if script_sig else Script()
         self.sequence = sequence
-    
-    @property
-    def scriptSig(self):
-        """Backward compatibility property"""
-        return self.script_sig
-    
-    @scriptSig.setter
-    def scriptSig(self, value):
-        self.script_sig = value
-    
-    @property
-    def nSequence(self):
-        """Backward compatibility property"""
-        return self.sequence
-    
-    @nSequence.setter
-    def nSequence(self, value):
-        self.sequence = value
-    
-    def serialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+
+    def serialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Serialize to stream"""
         self.prevout.serialize(stream, n_type, n_version)
         self.script_sig.serialize(stream, n_type, n_version)
-        stream.write(struct.pack('<I', self.sequence))
-    
-    def unserialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+        stream.write(struct.pack("<I", self.sequence))
+
+    def unserialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Unserialize from stream"""
         self.prevout.unserialize(stream, n_type, n_version)
         self.script_sig.unserialize(stream, n_type, n_version)
-        self.sequence = struct.unpack('<I', stream.read(4))[0]
-    
+        self.sequence = struct.unpack("<I", stream.read(4))[0]
+
     def is_final(self) -> bool:
         """Check if input is final"""
-        return self.sequence == 0xffffffff
+        return self.sequence == 0xFFFFFFFF
 
 
 class TxOut:
     """Transaction output"""
-    
-    def __init__(self, value: int = 0, script_pubkey: 'Script' = None):
+
+    def __init__(self, value: int = 0, script_pubkey: "Script" = None):
         self.value = value
         self.script_pubkey = script_pubkey if script_pubkey else Script()
-    
-    @property
-    def nValue(self):
-        """Backward compatibility property"""
-        return self.value
-    
-    @nValue.setter
-    def nValue(self, value):
-        self.value = value
-    
-    @property
-    def scriptPubKey(self):
-        """Backward compatibility property"""
-        return self.script_pubkey
-    
-    @scriptPubKey.setter
-    def scriptPubKey(self, value):
-        self.script_pubkey = value
-    
-    def serialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+
+    def serialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Serialize to stream"""
-        stream.write(struct.pack('<Q', self.value))
+        stream.write(struct.pack("<Q", self.value))
         self.script_pubkey.serialize(stream, n_type, n_version)
-    
-    def unserialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+
+    def unserialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Unserialize from stream"""
-        self.value = struct.unpack('<Q', stream.read(8))[0]
+        self.value = struct.unpack("<Q", stream.read(8))[0]
         self.script_pubkey = Script()
         self.script_pubkey.unserialize(stream, n_type, n_version)
-    
+
     def set_null(self):
         """Set to null"""
         self.value = -1
         self.script_pubkey = Script()
-    
+
     def is_null(self) -> bool:
         """Check if null"""
         return self.value == -1
@@ -392,59 +360,44 @@ class TxOut:
 
 class Transaction:
     """Bitcoin transaction"""
-    
+
     def __init__(self, version: int = 1, lock_time: int = 0):
         self.version = version
-        self.vin: List['TxIn'] = []
-        self.vout: List['TxOut'] = []
+        self.vin: List["TxIn"] = []
+        self.vout: List["TxOut"] = []
         self.lock_time = lock_time
-    
-    @property
-    def nVersion(self):
-        """Backward compatibility property"""
-        return self.version
-    
-    @nVersion.setter
-    def nVersion(self, value):
-        self.version = value
-    
-    @property
-    def nLockTime(self):
-        """Backward compatibility property"""
-        return self.lock_time
-    
-    @nLockTime.setter
-    def nLockTime(self, value):
-        self.lock_time = value
-    
+
     @property
     def txid(self) -> uint256:
         """Transaction ID (hash) - property version"""
         return self.get_hash()
-    
+
     def get_hash(self) -> uint256:
         """Get transaction hash"""
         from serialize import DataStream
+
         stream = DataStream()
         self.serialize(stream)
         return hash_to_uint256(double_sha256(stream.get_bytes()))
-    
-    def serialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+
+    def serialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Serialize to stream"""
-        stream.write(struct.pack('<i', self.version))
+        stream.write(struct.pack("<i", self.version))
         from serialize import write_compact_size
+
         write_compact_size(stream.vch, len(self.vin))
         for txin in self.vin:
             txin.serialize(stream, n_type, n_version)
         write_compact_size(stream.vch, len(self.vout))
         for txout in self.vout:
             txout.serialize(stream, n_type, n_version)
-        stream.write(struct.pack('<I', self.lock_time))
-    
-    def unserialize(self, stream: 'DataStream', n_type: int = 0, n_version: int = 101):
+        stream.write(struct.pack("<I", self.lock_time))
+
+    def unserialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Unserialize from stream"""
-        self.version = struct.unpack('<i', stream.read(4))[0]
+        self.version = struct.unpack("<i", stream.read(4))[0]
         from serialize import read_compact_size
+
         vin_size, _ = read_compact_size(stream.vch, stream.n_read_pos)
         stream.n_read_pos += get_size_of_compact_size(vin_size)
         self.vin = []
@@ -459,22 +412,22 @@ class Transaction:
             txout = TxOut()
             txout.unserialize(stream, n_type, n_version)
             self.vout.append(txout)
-        self.lock_time = struct.unpack('<I', stream.read(4))[0]
-    
+        self.lock_time = struct.unpack("<I", stream.read(4))[0]
+
     def is_coinbase(self) -> bool:
         """Check if coinbase transaction"""
         return len(self.vin) == 1 and self.vin[0].prevout.is_null()
-    
+
     def check_transaction(self) -> bool:
         """Basic transaction checks"""
         if len(self.vin) == 0 or len(self.vout) == 0:
             return False
-        
+
         # Check for negative values
         for txout in self.vout:
             if txout.value < 0:
                 return False
-        
+
         if self.is_coinbase():
             if len(self.vin[0].script_sig.data) < 2 or len(self.vin[0].script_sig.data) > 100:
                 return False
@@ -482,14 +435,14 @@ class Transaction:
             for txin in self.vin:
                 if txin.prevout.is_null():
                     return False
-        
+
         return True
-    
+
     @property
     def value_out(self) -> int:
         """Get total value of outputs - property version"""
         return self.get_value_out()
-    
+
     def get_value_out(self) -> int:
         """Get total value of outputs"""
         total = 0
@@ -498,7 +451,7 @@ class Transaction:
                 raise ValueError("Negative output value")
             total += txout.value
         return total
-    
+
     def is_final(self, best_height: int = 0) -> bool:
         """Check if transaction is final"""
         if self.lock_time == 0:
@@ -509,11 +462,17 @@ class Transaction:
             if not txin.is_final():
                 return False
         return True
-    
-    def __str__(self):
-        return f"Transaction(hash={self.get_hash().get_hex()[:12]}, vin={len(self.vin)}, vout={len(self.vout)})"
-    
-    def __repr__(self):
-        return f"Transaction(version={self.version}, vin={len(self.vin)}, vout={len(self.vout)}, lock_time={self.lock_time})"
-from serialize import get_size_of_compact_size
 
+    def __str__(self):
+        hash_str = self.get_hash().get_hex()[:12]
+        return f"Transaction(hash={hash_str}, " f"vin={len(self.vin)}, vout={len(self.vout)})"
+
+    def __repr__(self):
+        return (
+            f"Transaction(version={self.version}, "
+            f"vin={len(self.vin)}, vout={len(self.vout)}, "
+            f"lock_time={self.lock_time})"
+        )
+
+
+from serialize import get_size_of_compact_size  # noqa: E402
