@@ -6,7 +6,7 @@ Transaction and script system
 """
 
 import struct
-from typing import List
+from typing import List, Optional
 
 from cryptogenesis.crypto import double_sha256, hash_to_uint256
 from cryptogenesis.serialize import DataStream
@@ -312,6 +312,75 @@ class Script:
 
         return get_size_of_compact_size(len(self.data)) + len(self.data)
 
+    def get_op(self, pc: int) -> tuple[bool, int, int, Optional[bytes]]:
+        """
+        Get next opcode from script
+
+        Args:
+            pc: Current position in script
+
+        Returns:
+            (success, new_pc, opcode, data) tuple
+            - success: True if opcode was read
+            - new_pc: New position after reading
+            - opcode: Opcode value
+            - data: Push data (if opcode is push data), None otherwise
+        """
+        if pc >= len(self.data):
+            return False, pc, OP_INVALIDOPCODE, None
+
+        # Read instruction
+        opcode = self.data[pc]
+        pc += 1
+
+        # Handle multi-byte opcodes
+        if opcode >= OP_SINGLEBYTE_END:
+            if pc >= len(self.data):
+                return False, pc, OP_INVALIDOPCODE, None
+            opcode = (opcode << 8) | self.data[pc]
+            pc += 1
+
+        # Handle push data opcodes
+        data = None
+        if opcode <= OP_PUSHDATA4:
+            n_size = opcode
+            if opcode == OP_PUSHDATA1:
+                if pc >= len(self.data):
+                    return False, pc, OP_INVALIDOPCODE, None
+                n_size = self.data[pc]
+                pc += 1
+            elif opcode == OP_PUSHDATA2:
+                if pc + 2 > len(self.data):
+                    return False, pc, OP_INVALIDOPCODE, None
+                n_size = struct.unpack("<H", bytes(self.data[pc : pc + 2]))[0]
+                pc += 2
+            elif opcode == OP_PUSHDATA4:
+                if pc + 4 > len(self.data):
+                    return False, pc, OP_INVALIDOPCODE, None
+                n_size = struct.unpack("<I", bytes(self.data[pc : pc + 4]))[0]
+                pc += 4
+
+            if pc + n_size > len(self.data):
+                return False, pc, OP_INVALIDOPCODE, None
+
+            data = bytes(self.data[pc : pc + n_size])
+            pc += n_size
+
+        return True, pc, opcode, data
+
+    def find_and_delete(self, script_to_find: "Script"):
+        """Find and delete all occurrences of script_to_find"""
+        # Simple byte-level search and delete
+        script_bytes = bytes(script_to_find.data)
+        i = 0
+        while i < len(self.data):
+            if i + len(script_bytes) <= len(self.data):
+                if bytes(self.data[i : i + len(script_bytes)]) == script_bytes:
+                    # Delete this occurrence
+                    del self.data[i : i + len(script_bytes)]
+                    continue
+            i += 1
+
 
 class TxIn:
     """Transaction input"""
@@ -514,3 +583,1069 @@ class Transaction:
             f"vin={len(self.vin)}, vout={len(self.vout)}, "
             f"lock_time={self.lock_time})"
         )
+
+
+# ============================================================================
+# Script Evaluation Functions
+# ============================================================================
+
+
+# BigNum helper functions (CBigNum equivalent)
+def bignum_from_bytes(vch: bytes) -> int:
+    """Convert bytes to integer (little-endian, like CBigNum)"""
+    if not vch:
+        return 0
+
+    # Check for negative (sign bit on last byte)
+    is_negative = False
+    if vch[-1] & 0x80:
+        is_negative = True
+        # Clear sign bit
+        vch_list = list(vch)
+        vch_list[-1] &= 0x7F
+        vch = bytes(vch_list)
+
+    # Convert little-endian bytes to integer
+    result = 0
+    for i, b in enumerate(vch):
+        result |= b << (i * 8)
+
+    return -result if is_negative else result
+
+
+def bignum_to_bytes(n: int) -> bytes:
+    """Convert integer to bytes (little-endian, like CBigNum.getvch())"""
+    if n == 0:
+        return b"\x00"
+
+    is_negative = n < 0
+    abs_n = abs(n)
+
+    # Convert to little-endian bytes
+    bytes_list = []
+    while abs_n > 0:
+        bytes_list.append(abs_n & 0xFF)
+        abs_n >>= 8
+
+    # Set sign bit if negative
+    if is_negative:
+        if bytes_list[-1] & 0x80:
+            bytes_list.append(0x80)
+        else:
+            bytes_list[-1] |= 0x80
+
+    return bytes(bytes_list)
+
+
+def cast_to_bool(vch: bytes) -> bool:
+    """Cast value to bool (non-zero is true)"""
+    if not vch:
+        return False
+    # Check if all bytes are zero (except possibly sign bit)
+    for b in vch:
+        if b != 0:
+            return True
+    return False
+
+
+def make_same_size(vch1: bytearray, vch2: bytearray):
+    """Make two bytearrays the same size by padding with zeros"""
+    if len(vch1) < len(vch2):
+        vch1.extend(bytes(len(vch2) - len(vch1)))
+    if len(vch2) < len(vch1):
+        vch2.extend(bytes(len(vch1) - len(vch2)))
+
+
+def signature_hash(script_code: Script, tx_to: Transaction, n_in: int, n_hash_type: int) -> uint256:
+    """
+    Compute signature hash for transaction
+
+    Args:
+        script_code: Script code to sign
+        tx_to: Transaction being signed
+        n_in: Input index
+        n_hash_type: Hash type (SIGHASH_ALL, SIGHASH_NONE, etc.)
+
+    Returns:
+        Hash to sign
+    """
+    from cryptogenesis.serialize import SER_GETHASH, DataStream
+
+    if n_in >= len(tx_to.vin):
+        print(f"ERROR: SignatureHash() : nIn={n_in} out of range")
+        return uint256(1)
+
+    # Create a copy of the transaction
+    tx_tmp = Transaction()
+    tx_tmp.version = tx_to.version
+    tx_tmp.lock_time = tx_to.lock_time
+
+    # Remove OP_CODESEPARATOR from script
+    script_code_clean = Script()
+    for i in range(len(script_code.data)):
+        if script_code.data[i] != OP_CODESEPARATOR:
+            script_code_clean.data.append(script_code.data[i])
+
+    # Blank out other inputs' signatures
+    tx_tmp.vin = []
+    for i in range(len(tx_to.vin)):
+        txin = TxIn()
+        txin.prevout = tx_to.vin[i].prevout
+        txin.sequence = tx_to.vin[i].sequence
+        if i == n_in:
+            txin.script_sig = script_code_clean
+        else:
+            txin.script_sig = Script()
+        tx_tmp.vin.append(txin)
+
+    # Copy outputs
+    tx_tmp.vout = []
+    for txout in tx_to.vout:
+        txout_copy = TxOut()
+        txout_copy.value = txout.value
+        txout_copy.script_pubkey = Script()
+        txout_copy.script_pubkey.data = txout.script_pubkey.data.copy()
+        tx_tmp.vout.append(txout_copy)
+
+    # Handle hash types
+    if (n_hash_type & 0x1F) == SIGHASH_NONE:
+        # Wildcard payee
+        tx_tmp.vout.clear()
+        # Let others update at will
+        for i in range(len(tx_tmp.vin)):
+            if i != n_in:
+                tx_tmp.vin[i].sequence = 0
+    elif (n_hash_type & 0x1F) == SIGHASH_SINGLE:
+        # Only lockin the txout payee at same index as txin
+        n_out = n_in
+        if n_out >= len(tx_tmp.vout):
+            print(f"ERROR: SignatureHash() : nOut={n_out} out of range")
+            return uint256(1)
+        # Keep only the output at n_out
+        tx_tmp.vout = tx_tmp.vout[: n_out + 1]
+        for i in range(n_out):
+            tx_tmp.vout[i].value = -1
+            tx_tmp.vout[i].script_pubkey = Script()
+        # Let others update at will
+        for i in range(len(tx_tmp.vin)):
+            if i != n_in:
+                tx_tmp.vin[i].sequence = 0
+
+    # Blank out other inputs completely if SIGHASH_ANYONECANPAY
+    if n_hash_type & SIGHASH_ANYONECANPAY:
+        tx_tmp.vin = [tx_tmp.vin[n_in]]
+
+    # Serialize and hash
+    stream = DataStream(SER_GETHASH, 101)
+    tx_tmp.serialize(stream, SER_GETHASH, 101)
+    stream.write(struct.pack("<I", n_hash_type))
+    return hash_to_uint256(double_sha256(stream.get_bytes()))
+
+
+def eval_script(
+    script: Script, tx_to: Transaction, n_in: int, n_hash_type: int = 0, pv_stack_ret=None
+) -> bool:
+    """
+    Evaluate Bitcoin script (complete implementation with all opcodes)
+
+    Args:
+        script: Script to evaluate
+        tx_to: Transaction being evaluated
+        n_in: Input index
+        n_hash_type: Hash type for signatures
+        pv_stack_ret: Optional list to return stack
+
+    Returns:
+        True if script evaluates to true
+    """
+    from cryptogenesis.crypto import double_sha256, hash160, ripemd160, sha256
+
+    pc = 0
+    pbegin_code_hash = 0
+    vf_exec = []  # Stack of execution flags for IF/ELSE/ENDIF
+    stack = []  # Main stack
+    altstack = []  # Alt stack
+
+    if pv_stack_ret is not None:
+        pv_stack_ret.clear()
+
+    while pc < len(script.data):
+        # Check if we're in an executed block
+        f_exec = not (False in vf_exec)
+
+        # Read instruction
+        success, new_pc, opcode, data = script.get_op(pc)
+        if not success:
+            return False
+        pc = new_pc
+
+        # Handle push data
+        if f_exec and data is not None:
+            stack.append(data)
+            continue
+        elif not f_exec and not (OP_IF <= opcode <= OP_ENDIF):
+            continue
+
+        # Push value opcodes
+        if OP_1NEGATE <= opcode <= OP_16:
+            if f_exec:
+                # Use same formula as original: (int)opcode - (int)(OP_1 - 1)
+                # For OP_1NEGATE (79): 79 - 80 = -1
+                # For OP_1 (81): 81 - 80 = 1
+                # For OP_16 (96): 96 - 80 = 16
+                value = opcode - (OP_1 - 1)
+                stack.append(bignum_to_bytes(value))
+
+        # Control opcodes
+        elif opcode == OP_NOP:
+            pass
+        elif opcode == OP_VER:
+            if f_exec:
+                stack.append(bignum_to_bytes(101))  # VERSION
+        elif opcode in (OP_IF, OP_NOTIF, OP_VERIF, OP_VERNOTIF):
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                vch = stack[-1]
+                if opcode in (OP_VERIF, OP_VERNOTIF):
+                    version_val = bignum_from_bytes(vch)
+                    f_value = 101 >= version_val  # VERSION
+                else:
+                    f_value = cast_to_bool(vch)
+                if opcode in (OP_NOTIF, OP_VERNOTIF):
+                    f_value = not f_value
+                stack.pop()
+            else:
+                f_value = False
+            vf_exec.append(f_value)
+        elif opcode == OP_ELSE:
+            if not vf_exec:
+                return False
+            vf_exec[-1] = not vf_exec[-1]
+        elif opcode == OP_ENDIF:
+            if not vf_exec:
+                return False
+            vf_exec.pop()
+        elif opcode == OP_VERIFY:
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                f_value = cast_to_bool(stack[-1])
+                if f_value:
+                    stack.pop()
+                else:
+                    # Set pc to end to exit loop (equivalent to pc = pend in original)
+                    pc = len(script.data)
+        elif opcode == OP_RETURN:
+            # Set pc to end to exit loop (equivalent to pc = pend in original)
+            pc = len(script.data)
+
+        # Stack ops
+        elif opcode == OP_TOALTSTACK:
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                altstack.append(stack[-1])
+                stack.pop()
+        elif opcode == OP_FROMALTSTACK:
+            if f_exec:
+                if len(altstack) < 1:
+                    return False
+                stack.append(altstack[-1])
+                altstack.pop()
+        elif opcode == OP_2DROP:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                stack.pop()
+                stack.pop()
+        elif opcode == OP_2DUP:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                stack.append(stack[-2])
+                stack.append(stack[-1])
+        elif opcode == OP_3DUP:
+            if f_exec:
+                if len(stack) < 3:
+                    return False
+                stack.append(stack[-3])
+                stack.append(stack[-2])
+                stack.append(stack[-1])
+        elif opcode == OP_2OVER:
+            if f_exec:
+                if len(stack) < 4:
+                    return False
+                stack.append(stack[-4])
+                stack.append(stack[-3])
+        elif opcode == OP_2ROT:
+            if f_exec:
+                if len(stack) < 6:
+                    return False
+                vch1 = stack[-6]
+                vch2 = stack[-5]
+                del stack[-6:-4]
+                stack.append(vch1)
+                stack.append(vch2)
+        elif opcode == OP_2SWAP:
+            if f_exec:
+                if len(stack) < 4:
+                    return False
+                stack[-4], stack[-2] = stack[-2], stack[-4]
+                stack[-3], stack[-1] = stack[-1], stack[-3]
+        elif opcode == OP_IFDUP:
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                if cast_to_bool(stack[-1]):
+                    stack.append(stack[-1])
+        elif opcode == OP_DEPTH:
+            if f_exec:
+                stack.append(bignum_to_bytes(len(stack)))
+        elif opcode == OP_DROP:
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                stack.pop()
+        elif opcode == OP_DUP:
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                stack.append(stack[-1])
+        elif opcode == OP_NIP:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                del stack[-2]
+        elif opcode == OP_OVER:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                stack.append(stack[-2])
+        elif opcode == OP_PICK:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                n = bignum_from_bytes(stack[-1])
+                stack.pop()
+                if n < 0 or n >= len(stack):
+                    return False
+                stack.append(stack[-n - 1])
+        elif opcode == OP_ROLL:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                n = bignum_from_bytes(stack[-1])
+                stack.pop()
+                if n < 0 or n >= len(stack):
+                    return False
+                vch = stack[-n - 1]
+                del stack[-n - 1]
+                stack.append(vch)
+        elif opcode == OP_ROT:
+            if f_exec:
+                if len(stack) < 3:
+                    return False
+                stack[-3], stack[-2] = stack[-2], stack[-3]
+                stack[-2], stack[-1] = stack[-1], stack[-2]
+        elif opcode == OP_SWAP:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                stack[-2], stack[-1] = stack[-1], stack[-2]
+        elif opcode == OP_TUCK:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                stack.insert(-2, stack[-1])
+
+        # Splice ops
+        elif opcode == OP_CAT:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                vch1 = bytearray(stack[-2])
+                vch2 = stack[-1]
+                vch1.extend(vch2)
+                stack.pop()
+                stack.pop()
+                stack.append(bytes(vch1))
+        elif opcode == OP_SUBSTR:
+            if f_exec:
+                if len(stack) < 3:
+                    return False
+                vch = bytearray(stack[-3])
+                n_begin = bignum_from_bytes(stack[-2])
+                n_size = bignum_from_bytes(stack[-1])
+                n_end = n_begin + n_size
+                if n_begin < 0 or n_end < n_begin:
+                    return False
+                if n_begin > len(vch):
+                    n_begin = len(vch)
+                if n_end > len(vch):
+                    n_end = len(vch)
+                del vch[n_end:]
+                del vch[:n_begin]
+                stack.pop()
+                stack.pop()
+                stack.pop()
+                stack.append(bytes(vch))
+        elif opcode == OP_LEFT:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                vch = bytearray(stack[-2])
+                n_size = bignum_from_bytes(stack[-1])
+                if n_size < 0:
+                    return False
+                if n_size > len(vch):
+                    n_size = len(vch)
+                del vch[n_size:]
+                stack.pop()
+                stack.pop()
+                stack.append(bytes(vch))
+        elif opcode == OP_RIGHT:
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                vch = bytearray(stack[-2])
+                n_size = bignum_from_bytes(stack[-1])
+                if n_size < 0:
+                    return False
+                if n_size > len(vch):
+                    n_size = len(vch)
+                del vch[: len(vch) - n_size]
+                stack.pop()
+                stack.pop()
+                stack.append(bytes(vch))
+        elif opcode == OP_SIZE:
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                stack.append(bignum_to_bytes(len(stack[-1])))
+
+        # Bitwise ops
+        elif opcode == OP_INVERT:
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                vch = bytearray(stack[-1])
+                for i in range(len(vch)):
+                    vch[i] = ~vch[i] & 0xFF
+                stack[-1] = bytes(vch)
+        elif opcode in (OP_AND, OP_OR, OP_XOR):
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                vch1 = bytearray(stack[-2])
+                vch2 = bytearray(stack[-1])
+                make_same_size(vch1, vch2)
+                if opcode == OP_AND:
+                    for i in range(len(vch1)):
+                        vch1[i] &= vch2[i]
+                elif opcode == OP_OR:
+                    for i in range(len(vch1)):
+                        vch1[i] |= vch2[i]
+                elif opcode == OP_XOR:
+                    for i in range(len(vch1)):
+                        vch1[i] ^= vch2[i]
+                stack.pop()
+                stack.pop()
+                stack.append(bytes(vch1))
+        elif opcode in (OP_EQUAL, OP_EQUALVERIFY):
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                f_equal = stack[-2] == stack[-1]
+                stack.pop()
+                stack.pop()
+                stack.append(bytes([1]) if f_equal else bytes([0]))
+                if opcode == OP_EQUALVERIFY:
+                    if f_equal:
+                        stack.pop()
+                    else:
+                        # Set pc to end to exit loop (equivalent to pc = pend in original)
+                        pc = len(script.data)
+
+        # Numeric ops (single operand)
+        elif opcode in (
+            OP_1ADD,
+            OP_1SUB,
+            OP_2MUL,
+            OP_2DIV,
+            OP_NEGATE,
+            OP_ABS,
+            OP_NOT,
+            OP_0NOTEQUAL,
+        ):
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                bn = bignum_from_bytes(stack[-1])
+                if opcode == OP_1ADD:
+                    bn += 1
+                elif opcode == OP_1SUB:
+                    bn -= 1
+                elif opcode == OP_2MUL:
+                    bn <<= 1
+                elif opcode == OP_2DIV:
+                    bn >>= 1
+                elif opcode == OP_NEGATE:
+                    bn = -bn
+                elif opcode == OP_ABS:
+                    bn = abs(bn)
+                elif opcode == OP_NOT:
+                    bn = 1 if (bn == 0) else 0
+                elif opcode == OP_0NOTEQUAL:
+                    bn = 1 if (bn != 0) else 0
+                stack.pop()
+                stack.append(bignum_to_bytes(bn))
+
+        # Numeric ops (two operands)
+        elif opcode in (
+            OP_ADD,
+            OP_SUB,
+            OP_MUL,
+            OP_DIV,
+            OP_MOD,
+            OP_LSHIFT,
+            OP_RSHIFT,
+            OP_BOOLAND,
+            OP_BOOLOR,
+            OP_NUMEQUAL,
+            OP_NUMEQUALVERIFY,
+            OP_NUMNOTEQUAL,
+            OP_LESSTHAN,
+            OP_GREATERTHAN,
+            OP_LESSTHANOREQUAL,
+            OP_GREATERTHANOREQUAL,
+            OP_MIN,
+            OP_MAX,
+        ):
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                bn1 = bignum_from_bytes(stack[-2])
+                bn2 = bignum_from_bytes(stack[-1])
+                bn = 0
+
+                if opcode == OP_ADD:
+                    bn = bn1 + bn2
+                elif opcode == OP_SUB:
+                    bn = bn1 - bn2
+                elif opcode == OP_MUL:
+                    bn = bn1 * bn2
+                elif opcode == OP_DIV:
+                    if bn2 == 0:
+                        return False
+                    bn = bn1 // bn2
+                elif opcode == OP_MOD:
+                    if bn2 == 0:
+                        return False
+                    bn = bn1 % bn2
+                elif opcode == OP_LSHIFT:
+                    if bn2 < 0:
+                        return False
+                    bn = bn1 << int(bn2)
+                elif opcode == OP_RSHIFT:
+                    if bn2 < 0:
+                        return False
+                    bn = bn1 >> int(bn2)
+                elif opcode == OP_BOOLAND:
+                    bn = 1 if (bn1 != 0 and bn2 != 0) else 0
+                elif opcode == OP_BOOLOR:
+                    bn = 1 if (bn1 != 0 or bn2 != 0) else 0
+                elif opcode == OP_NUMEQUAL:
+                    bn = 1 if (bn1 == bn2) else 0
+                elif opcode == OP_NUMEQUALVERIFY:
+                    bn = 1 if (bn1 == bn2) else 0
+                elif opcode == OP_NUMNOTEQUAL:
+                    bn = 1 if (bn1 != bn2) else 0
+                elif opcode == OP_LESSTHAN:
+                    bn = 1 if (bn1 < bn2) else 0
+                elif opcode == OP_GREATERTHAN:
+                    bn = 1 if (bn1 > bn2) else 0
+                elif opcode == OP_LESSTHANOREQUAL:
+                    bn = 1 if (bn1 <= bn2) else 0
+                elif opcode == OP_GREATERTHANOREQUAL:
+                    bn = 1 if (bn1 >= bn2) else 0
+                elif opcode == OP_MIN:
+                    bn = bn1 if (bn1 < bn2) else bn2
+                elif opcode == OP_MAX:
+                    bn = bn1 if (bn1 > bn2) else bn2
+
+                stack.pop()
+                stack.pop()
+                stack.append(bignum_to_bytes(bn))
+
+                if opcode == OP_NUMEQUALVERIFY:
+                    if bn != 0:
+                        stack.pop()
+                    else:
+                        # Set pc to end to exit loop (equivalent to pc = pend in original)
+                        pc = len(script.data)
+
+        elif opcode == OP_WITHIN:
+            if f_exec:
+                if len(stack) < 3:
+                    return False
+                bn1 = bignum_from_bytes(stack[-3])
+                bn2 = bignum_from_bytes(stack[-2])
+                bn3 = bignum_from_bytes(stack[-1])
+                f_value = bn2 <= bn1 < bn3
+                stack.pop()
+                stack.pop()
+                stack.pop()
+                stack.append(bytes([1]) if f_value else bytes([0]))
+
+        # Crypto ops
+        elif opcode in (OP_RIPEMD160, OP_SHA1, OP_SHA256, OP_HASH160, OP_HASH256):
+            if f_exec:
+                if len(stack) < 1:
+                    return False
+                vch = stack[-1]
+                if opcode == OP_RIPEMD160:
+                    vch_hash = ripemd160(vch)
+                elif opcode == OP_SHA1:
+                    import hashlib
+
+                    vch_hash = hashlib.sha1(vch).digest()
+                elif opcode == OP_SHA256:
+                    vch_hash = sha256(vch)
+                elif opcode == OP_HASH160:
+                    vch_hash = hash160(vch)
+                elif opcode == OP_HASH256:
+                    vch_hash = double_sha256(vch)
+                stack.pop()
+                stack.append(vch_hash)
+
+        elif opcode == OP_CODESEPARATOR:
+            pbegin_code_hash = pc
+
+        elif opcode in (OP_CHECKSIG, OP_CHECKSIGVERIFY):
+            if f_exec:
+                if len(stack) < 2:
+                    return False
+                vch_sig = stack[-2]
+                vch_pubkey = stack[-1]
+
+                # Subset of script starting at most recent codeseparator
+                script_code = Script()
+                script_code.data = script.data[pbegin_code_hash:]
+
+                # Drop the signature from script code
+                sig_script = Script(vch_sig)
+                script_code.find_and_delete(sig_script)
+
+                f_success = check_sig(vch_sig, vch_pubkey, script_code, tx_to, n_in, n_hash_type)
+                stack.pop()
+                stack.pop()
+                stack.append(bytes([1]) if f_success else bytes([0]))
+                if opcode == OP_CHECKSIGVERIFY:
+                    if f_success:
+                        stack.pop()
+                    else:
+                        # Set pc to end to exit loop (equivalent to pc = pend in original)
+                        pc = len(script.data)
+
+        elif opcode in (OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY):
+            if f_exec:
+                # Stack order (from top): num_pubkeys, pubkeys..., num_sigs, sigs...
+                i = 1
+                if len(stack) < i:
+                    return False
+
+                n_keys_count = bignum_from_bytes(stack[-i])
+                if n_keys_count < 0:
+                    return False
+                ikey = i + 1  # First pubkey at stack[-ikey]
+                i += n_keys_count
+                if len(stack) < i:
+                    return False
+
+                n_sigs_count = bignum_from_bytes(stack[-i])
+                if n_sigs_count < 0 or n_sigs_count > n_keys_count:
+                    return False
+                isig = i + 1  # First signature at stack[-isig]
+                i += n_sigs_count
+                if len(stack) < i:
+                    return False
+
+                # Subset of script starting at most recent codeseparator
+                script_code = Script()
+                script_code.data = script.data[pbegin_code_hash:]
+
+                # Drop the signatures from script code (in reverse order to match original)
+                for j in range(n_sigs_count):
+                    vch_sig = stack[-isig - j]
+                    sig_script = Script(vch_sig)
+                    script_code.find_and_delete(sig_script)
+
+                f_success = True
+                while f_success and n_sigs_count > 0:
+                    vch_sig = stack[-isig]
+                    vch_pubkey = stack[-ikey]
+
+                    # Check signature
+                    if check_sig(vch_sig, vch_pubkey, script_code, tx_to, n_in, n_hash_type):
+                        isig += 1
+                        n_sigs_count -= 1
+                    ikey += 1
+                    n_keys_count -= 1
+
+                    # If there are more signatures left than keys left, too many failed
+                    if n_sigs_count > n_keys_count:
+                        f_success = False
+
+                # Pop all items (i total items)
+                for _ in range(i):
+                    stack.pop()
+
+                stack.append(bytes([1]) if f_success else bytes([0]))
+
+                if opcode == OP_CHECKMULTISIGVERIFY:
+                    if f_success:
+                        stack.pop()
+                    else:
+                        # Set pc to end to exit loop (equivalent to pc = pend in original)
+                        pc = len(script.data)
+
+        else:
+            # Unknown opcode
+            return False
+
+    if pv_stack_ret is not None:
+        pv_stack_ret.extend(stack)
+
+    # Script is valid if stack is non-empty and top element is true
+    if not stack:
+        return False
+    return cast_to_bool(stack[-1])
+
+
+def verify_signature(
+    tx_from: Transaction, tx_to: Transaction, n_in: int, n_hash_type: int = 0
+) -> bool:
+    """
+    Verify signature for transaction input
+
+    Args:
+        tx_from: Previous transaction (contains the output being spent)
+        tx_to: Current transaction (contains the input being verified)
+        n_in: Input index in tx_to
+        n_hash_type: Hash type
+
+    Returns:
+        True if signature is valid
+    """
+    if n_in >= len(tx_to.vin):
+        return False
+
+    txin = tx_to.vin[n_in]
+    if txin.prevout.n >= len(tx_from.vout):
+        return False
+
+    txout = tx_from.vout[txin.prevout.n]
+
+    if txin.prevout.hash != tx_from.get_hash():
+        return False
+
+    # Combine scriptSig and scriptPubKey with OP_CODESEPARATOR
+    combined_script = Script()
+    combined_script.data = txin.script_sig.data.copy()
+    combined_script.data.append(OP_CODESEPARATOR)
+    combined_script.data.extend(txout.script_pubkey.data)
+
+    return eval_script(combined_script, tx_to, n_in, n_hash_type)
+
+
+def check_sig(
+    vch_sig: bytes,
+    vch_pubkey: bytes,
+    script_code: Script,
+    tx_to: Transaction,
+    n_in: int,
+    n_hash_type: int = 0,
+) -> bool:
+    """
+    Check signature
+
+    Args:
+        vch_sig: Signature bytes
+        vch_pubkey: Public key bytes
+        script_code: Script code
+        tx_to: Transaction being verified
+        n_in: Input index
+        n_hash_type: Hash type (0 means extract from signature)
+
+    Returns:
+        True if signature is valid
+    """
+    from cryptogenesis.crypto import Key
+
+    if not vch_sig:
+        return False
+
+    # Extract hash type from signature
+    if n_hash_type == 0:
+        n_hash_type = vch_sig[-1]
+    elif n_hash_type != vch_sig[-1]:
+        return False
+
+    # Remove hash type byte
+    vch_sig_clean = vch_sig[:-1]
+
+    # Create key from public key
+    try:
+        key = Key()
+        key.set_pubkey(vch_pubkey)
+    except Exception:
+        return False
+
+    # Compute signature hash
+    hash_sig = signature_hash(script_code, tx_to, n_in, n_hash_type)
+
+    # Verify signature
+    try:
+        return key.verify(hash_sig, vch_sig_clean)
+    except Exception:
+        return False
+
+
+# Add connect_inputs as a method to Transaction class
+# This is defined outside the class but will be attached as a method
+def _connect_inputs_impl(
+    self,
+    txdb,
+    map_test_pool=None,
+    pos_this_tx=None,
+    height: int = 0,
+    fees: int = 0,
+    is_block: bool = False,
+    is_miner: bool = False,
+    min_fee: int = 0,
+) -> tuple[bool, int]:
+    """
+    Connect transaction inputs - validate inputs and mark outputs as spent
+
+    Args:
+        txdb: Transaction database
+        map_test_pool: Test pool for miner (optional)
+        pos_this_tx: Position of this transaction
+        height: Block height
+        fees: Accumulated fees (output parameter)
+        is_block: True if connecting in a block
+        is_miner: True if called by miner
+        min_fee: Minimum fee required
+
+    Returns:
+        (success, fees) tuple
+    """
+    from cryptogenesis.chain import get_chain
+    from cryptogenesis.mempool import get_mempool
+    from cryptogenesis.utxo import DiskTxPos, TxIndex
+
+    if map_test_pool is None:
+        map_test_pool = {}
+    if pos_this_tx is None:
+        pos_this_tx = DiskTxPos(1, 1, 1)
+
+    if self.is_coinbase():
+        # Coinbase has no inputs to connect
+        if is_block:
+            # Add transaction to disk index
+            if not txdb.add_tx_index(self, pos_this_tx, height):
+                print(f"ConnectInputs() : AddTxIndex failed for {self.get_hash().get_hex()[:6]}")
+                return False, fees
+        elif is_miner:
+            # Add transaction to test pool
+            map_test_pool[self.get_hash()] = TxIndex(DiskTxPos(1, 1, 1), len(self.vout))
+        return True, fees
+
+    # Validate inputs
+    value_in = 0
+    chain = get_chain()
+    mempool = get_mempool()
+
+    for i, txin in enumerate(self.vin):
+        prevout = txin.prevout
+
+        # Read txindex
+        txindex = None
+        found = False
+
+        if is_miner and prevout.hash in map_test_pool:
+            # Get txindex from current proposed changes
+            txindex = map_test_pool[prevout.hash]
+            found = True
+        else:
+            # Read txindex from txdb
+            txindex = txdb.read_tx_index(prevout.hash)
+            found = txindex is not None
+
+        if not found and (is_block or is_miner):
+            if is_miner:
+                return False, fees
+            print(
+                f"ConnectInputs() : {self.get_hash().get_hex()[:6]} "
+                f"prev tx {prevout.hash.get_hex()[:6]} index entry not found"
+            )
+            return False, fees
+
+        # Read previous transaction
+        tx_prev = None
+        if not found or txindex.pos == DiskTxPos(1, 1, 1):
+            # Get prev tx from mempool or database
+            tx_prev = mempool.get_transaction(prevout.hash)
+            if not tx_prev:
+                tx_prev = txdb.read_disk_tx(prevout.hash)
+            if not tx_prev:
+                print(
+                    f"ConnectInputs() : {self.get_hash().get_hex()[:6]} "
+                    f"mapTransactions prev not found {prevout.hash.get_hex()[:6]}"
+                )
+                return False, fees
+            if not found:
+                # Create new txindex for mempool transaction
+                txindex = TxIndex(DiskTxPos(1, 1, 1), len(tx_prev.vout))
+        else:
+            # Get prev tx from disk
+            tx_prev = txdb.read_disk_tx(prevout.hash)
+            if not tx_prev:
+                print(
+                    f"ConnectInputs() : {self.get_hash().get_hex()[:6]} "
+                    f"ReadFromDisk prev tx {prevout.hash.get_hex()[:6]} failed"
+                )
+                return False, fees
+
+        # Check output index
+        if prevout.n >= len(tx_prev.vout) or prevout.n >= len(txindex.spent):
+            print(
+                f"ConnectInputs() : {self.get_hash().get_hex()[:6]} "
+                f"prevout.n out of range {prevout.n} {len(tx_prev.vout)} {len(txindex.spent)}"
+            )
+            return False, fees
+
+        # If prev is coinbase, check that it's matured
+        if tx_prev.is_coinbase():
+            from cryptogenesis.transaction import COINBASE_MATURITY
+
+            best = chain.get_best_index()
+            best_height = chain.get_best_height()
+
+            if best and best_height >= 0:
+                # Walk back from best block, checking blocks at depth < COINBASE_MATURITY-1
+                # (i.e., depth 0 to COINBASE_MATURITY-2, since COINBASE_MATURITY is 100)
+                pindex = best
+                while pindex and (best_height - pindex.height) < (COINBASE_MATURITY - 1):
+                    # Check if this block's position matches the coinbase transaction's position
+                    if (
+                        not txindex.pos.is_null()
+                        and pindex.file_num == txindex.pos.file_num
+                        and pindex.block_pos == txindex.pos.block_pos
+                    ):
+                        depth = best_height - pindex.height
+                        print(f"ConnectInputs() : tried to spend coinbase at depth {depth}")
+                        return False, fees
+                    pindex = pindex.prev
+
+        # Verify signature
+        if not verify_signature(tx_prev, self, i, 0):
+            print(f"ConnectInputs() : {self.get_hash().get_hex()[:6]} VerifySignature failed")
+            return False, fees
+
+        # Check for conflicts
+        if not txindex.spent[prevout.n].is_null():
+            if is_miner:
+                return False, fees
+            print(
+                f"ConnectInputs() : {self.get_hash().get_hex()[:6]} "
+                f"prev tx already used at {txindex.spent[prevout.n]}"
+            )
+            return False, fees
+
+        # Mark outpoints as spent
+        txindex.spent[prevout.n] = pos_this_tx
+
+        # Write back
+        if is_block:
+            txdb.update_tx_index(prevout.hash, txindex)
+        elif is_miner:
+            map_test_pool[prevout.hash] = txindex
+
+        value_in += tx_prev.vout[prevout.n].value
+
+    # Tally transaction fees
+    tx_fee = value_in - self.get_value_out()
+    if tx_fee < 0:
+        print(f"ConnectInputs() : {self.get_hash().get_hex()[:6]} nTxFee < 0")
+        return False, fees
+    if tx_fee < min_fee:
+        return False, fees
+    fees += tx_fee
+
+    if is_block:
+        # Add transaction to disk index
+        if not txdb.add_tx_index(self, pos_this_tx, height):
+            print(f"ConnectInputs() : AddTxIndex failed for {self.get_hash().get_hex()[:6]}")
+            return False, fees
+    elif is_miner:
+        # Add transaction to test pool
+        map_test_pool[self.get_hash()] = TxIndex(DiskTxPos(1, 1, 1), len(self.vout))
+
+    return True, fees
+
+
+# Attach connect_inputs as a method to Transaction class (monkey-patching)
+Transaction.connect_inputs = _connect_inputs_impl  # type: ignore[attr-defined]
+
+
+# Add disconnect_inputs as a method to Transaction class
+def _disconnect_inputs_impl(self, txdb) -> bool:
+    """
+    Disconnect transaction inputs - unmark outputs as spent
+
+    Args:
+        txdb: Transaction database
+
+    Returns:
+        True if successful
+    """
+    if self.is_coinbase():
+        # Coinbase has no inputs to disconnect
+        # Remove transaction from index
+        if not txdb.erase_tx_index(self):
+            print("DisconnectInputs() : EraseTxIndex failed")
+            return False
+        return True
+
+    # Unmark outputs as spent
+    for txin in self.vin:
+        prevout = txin.prevout
+
+        # Get prev txindex from database
+        txindex = txdb.read_tx_index(prevout.hash)
+        if not txindex:
+            print("DisconnectInputs() : ReadTxIndex failed")
+            return False
+
+        if prevout.n >= len(txindex.spent):
+            print("DisconnectInputs() : prevout.n out of range")
+            return False
+
+        # Mark outpoint as not spent
+        txindex.spent[prevout.n].set_null()
+
+        # Write back
+        txdb.update_tx_index(prevout.hash, txindex)
+
+    # Remove transaction from index
+    if not txdb.erase_tx_index(self):
+        print("DisconnectInputs() : EraseTxIndex failed")
+        return False
+
+    return True
+
+
+# Attach disconnect_inputs as a method to Transaction class (monkey-patching)
+Transaction.disconnect_inputs = _disconnect_inputs_impl  # type: ignore[attr-defined]

@@ -86,6 +86,140 @@ class BlockIndex:
         return times[len(times) // 2]
 
 
+class BlockLocator:
+    """Block locator for getblocks message - sparse chain representation"""
+
+    def __init__(self, index: Optional[BlockIndex] = None, block_hash: Optional[uint256] = None):
+        """
+        Initialize block locator
+
+        Args:
+            index: BlockIndex to create locator from
+            block_hash: Block hash to create locator from (looks up index)
+        """
+        self.have: List[uint256] = []
+        if index:
+            self.set(index)
+        elif block_hash:
+            from cryptogenesis.chain import get_chain
+
+            chain = get_chain()
+            index = chain.get_block_index(block_hash)
+            if index:
+                self.set(index)
+
+    def set(self, index: BlockIndex):
+        """Set locator from block index - creates sparse representation"""
+        self.have.clear()
+        step = 1
+        current = index
+        while current:
+            self.have.append(current.get_block_hash())
+
+            # Exponentially larger steps back
+            for _ in range(step):
+                if current.prev is None:
+                    break
+                current = current.prev
+            if len(self.have) > 10:
+                step *= 2
+        # Always include genesis block
+        self.have.append(HASH_GENESIS_BLOCK)
+
+    def get_block_index(self) -> Optional[BlockIndex]:
+        """
+        Find the first block the caller has in the main chain
+
+        Returns:
+            BlockIndex of the first matching block in main chain, or genesis block if none found
+        """
+        from cryptogenesis.chain import get_chain
+
+        chain = get_chain()
+        best = chain.get_best_index()
+
+        # Find the first block in our chain that matches
+        for hash_val in self.have:
+            index = chain.get_block_index(hash_val)
+            if index:
+                # Check if it's in the main chain
+                if index.is_in_main_chain(best):
+                    return index
+
+        # Return genesis block if no match found
+        return chain.get_genesis_index()
+
+    def get_block_hash(self) -> uint256:
+        """
+        Find the first block hash the caller has in the main chain
+
+        Returns:
+            Block hash of the first matching block in main chain, or genesis hash if none found
+        """
+        from cryptogenesis.chain import get_chain
+
+        chain = get_chain()
+        best = chain.get_best_index()
+
+        # Find the first block in our chain that matches
+        for hash_val in self.have:
+            index = chain.get_block_index(hash_val)
+            if index:
+                # Check if it's in the main chain
+                if index.is_in_main_chain(best):
+                    return hash_val
+
+        # Return genesis hash if no match found
+        return HASH_GENESIS_BLOCK
+
+    def get_height(self) -> int:
+        """
+        Get height of the first block the caller has in the main chain
+
+        Returns:
+            Height of the matching block, or 0 if none found
+        """
+        index = self.get_block_index()
+        if not index:
+            return 0
+        return index.height
+
+    def serialize(self, stream: DataStream, n_type: int = 0, n_version: int = 101):
+        """Serialize block locator"""
+        from cryptogenesis.serialize import SER_GETHASH, write_compact_size
+
+        # Write version if not hashing
+        if not (n_type & SER_GETHASH):
+            stream.write(struct.pack("<i", n_version))
+
+        # Write have array
+        write_compact_size(stream.vch, len(self.have))
+        for hash_val in self.have:
+            hash_val.serialize(stream, n_type, n_version)
+
+    def unserialize(self, stream: DataStream, n_type: int = 0, n_version: int = 101):
+        """Unserialize block locator"""
+        from cryptogenesis.serialize import SER_GETHASH, read_compact_size
+
+        # Read version if present
+        if not (n_type & SER_GETHASH):
+            data = stream.read(4)
+            if len(data) < 4:
+                raise ValueError("Not enough data for version")
+            struct.unpack("<i", data)[0]  # Read and discard version
+
+        # Read have array
+        size, _ = read_compact_size(stream.vch, stream.n_read_pos)
+        stream.n_read_pos += (
+            1 if size < 253 else (3 if size <= 0xFFFF else (5 if size <= 0xFFFFFFFF else 9))
+        )
+        self.have = []
+        for _ in range(size):
+            hash_val = uint256()
+            hash_val.unserialize(stream, n_type, n_version)
+            self.have.append(hash_val)
+
+
 class Block:
     """Bitcoin block"""
 
