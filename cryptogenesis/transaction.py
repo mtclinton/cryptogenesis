@@ -182,6 +182,10 @@ class OutPoint:
     def __repr__(self):
         return f"OutPoint(hash={self.hash.get_hex()[:12]}, n={self.n})"
 
+    def get_serialize_size(self, n_type: int = 0, n_version: int = 101) -> int:
+        """Get serialized size"""
+        return 32 + 4  # hash + n
+
 
 class Script:
     """Bitcoin script"""
@@ -302,6 +306,12 @@ class Script:
     def __len__(self):
         return len(self.data)
 
+    def get_serialize_size(self, n_type: int = 0, n_version: int = 101) -> int:
+        """Get serialized size"""
+        from cryptogenesis.serialize import get_size_of_compact_size
+
+        return get_size_of_compact_size(len(self.data)) + len(self.data)
+
 
 class TxIn:
     """Transaction input"""
@@ -328,6 +338,15 @@ class TxIn:
     def is_final(self) -> bool:
         """Check if input is final"""
         return self.sequence == 0xFFFFFFFF
+
+    def get_serialize_size(self, n_type: int = 0, n_version: int = 101) -> int:
+        """Get serialized size"""
+        from cryptogenesis.serialize import get_serialize_size
+
+        size = get_serialize_size(self.prevout, n_type, n_version)
+        size += get_serialize_size(self.script_sig, n_type, n_version)
+        size += 4  # sequence
+        return size
 
 
 class TxOut:
@@ -356,6 +375,14 @@ class TxOut:
     def is_null(self) -> bool:
         """Check if null"""
         return self.value == -1
+
+    def get_serialize_size(self, n_type: int = 0, n_version: int = 101) -> int:
+        """Get serialized size"""
+        from cryptogenesis.serialize import get_serialize_size
+
+        size = 8  # value
+        size += get_serialize_size(self.script_pubkey, n_type, n_version)
+        return size
 
 
 class Transaction:
@@ -413,6 +440,20 @@ class Transaction:
             txout.unserialize(stream, n_type, n_version)
             self.vout.append(txout)
         self.lock_time = struct.unpack("<I", stream.read(4))[0]
+
+    def get_serialize_size(self, n_type: int = 0, n_version: int = 101) -> int:
+        """Get serialized size"""
+        from cryptogenesis.serialize import get_size_of_compact_size
+
+        size = 4  # version
+        size += get_size_of_compact_size(len(self.vin))
+        for txin in self.vin:
+            size += txin.get_serialize_size(n_type, n_version)
+        size += get_size_of_compact_size(len(self.vout))
+        for txout in self.vout:
+            size += txout.get_serialize_size(n_type, n_version)
+        size += 4  # lock_time
+        return size
 
     def is_coinbase(self) -> bool:
         """Check if coinbase transaction"""

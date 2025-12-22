@@ -14,9 +14,15 @@ from cryptogenesis.crypto import (
     hash256,
     hash_to_uint256,
     ripemd160,
+    serialize_hash,
     sha256,
 )
-from cryptogenesis.serialize import DataStream, read_compact_size, write_compact_size
+from cryptogenesis.serialize import (
+    DataStream,
+    get_size_of_compact_size,
+    read_compact_size,
+    write_compact_size,
+)
 from cryptogenesis.transaction import (
     CENT,
     COIN,
@@ -46,8 +52,11 @@ __all__ = [
     "sha256",
     # Serialize
     "DataStream",
+    "get_size_of_compact_size",
     "read_compact_size",
     "write_compact_size",
+    # Crypto (additional)
+    "serialize_hash",
     # Transaction
     "COIN",
     "CENT",

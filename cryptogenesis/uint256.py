@@ -169,6 +169,19 @@ class uint256:
         """Convert to 32-byte little-endian bytes"""
         return struct.pack("<8I", *self.pn)
 
+    def serialize(self, stream, n_type: int = 0, n_version: int = 101):
+        """Serialize to stream"""
+        stream.write(self.to_bytes())
+
+    def unserialize(self, stream, n_type: int = 0, n_version: int = 101):
+        """Unserialize from stream"""
+        bytes_val = stream.read(32)
+        self.pn = list(struct.unpack("<8I", bytes_val))
+
+    def get_serialize_size(self, n_type: int = 0, n_version: int = 101) -> int:
+        """Get serialized size"""
+        return 32
+
     def begin(self):
         """Iterator begin"""
         return 0
