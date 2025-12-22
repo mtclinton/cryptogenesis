@@ -10,10 +10,17 @@ Main entry point
 import sys
 import time
 
-from block import HASH_GENESIS_BLOCK, Block
-from crypto import Key
-from transaction import COIN, Script, Transaction, TxIn, TxOut
-from uint256 import uint256
+from cryptogenesis import (
+    COIN,
+    HASH_GENESIS_BLOCK,
+    Block,
+    Key,
+    Script,
+    Transaction,
+    TxIn,
+    TxOut,
+    uint256,
+)
 
 
 def create_genesis_block():
@@ -43,7 +50,7 @@ def create_genesis_block():
         reversed(genesis_pubkey_be)
     )  # Little-endian (after BigNum.getvch() reverse)
     tx_new.vout[0].script_pubkey.push_data(genesis_pubkey_le)
-    from transaction import OP_CHECKSIG
+    from cryptogenesis.transaction import OP_CHECKSIG
 
     tx_new.vout[0].script_pubkey.push_opcode(OP_CHECKSIG)
 
@@ -97,7 +104,7 @@ def main():
     tx.vin = [TxIn()]
     tx.vout = [TxOut(10 * COIN, Script())]
     tx.vout[0].script_pubkey.push_data(pubkey)
-    from transaction import OP_CHECKSIG
+    from cryptogenesis.transaction import OP_CHECKSIG
 
     tx.vout[0].script_pubkey.push_opcode(OP_CHECKSIG)
 

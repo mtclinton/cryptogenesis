@@ -8,9 +8,9 @@ Transaction and script system
 import struct
 from typing import List
 
-from crypto import double_sha256, hash_to_uint256
-from serialize import DataStream
-from uint256 import uint256
+from cryptogenesis.crypto import double_sha256, hash_to_uint256
+from cryptogenesis.serialize import DataStream
+from cryptogenesis.uint256 import uint256
 
 # Constants
 COIN = 100000000
@@ -283,14 +283,14 @@ class Script:
 
     def serialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Serialize to stream"""
-        from serialize import write_compact_size
+        from cryptogenesis.serialize import write_compact_size
 
         write_compact_size(stream.vch, len(self.data))
         stream.write(bytes(self.data))
 
     def unserialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Unserialize from stream"""
-        from serialize import read_compact_size
+        from cryptogenesis.serialize import get_size_of_compact_size, read_compact_size
 
         size, _ = read_compact_size(stream.vch, stream.n_read_pos)
         stream.n_read_pos += get_size_of_compact_size(size)
@@ -374,7 +374,7 @@ class Transaction:
 
     def get_hash(self) -> uint256:
         """Get transaction hash"""
-        from serialize import DataStream
+        from cryptogenesis.serialize import DataStream
 
         stream = DataStream()
         self.serialize(stream)
@@ -383,7 +383,7 @@ class Transaction:
     def serialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Serialize to stream"""
         stream.write(struct.pack("<i", self.version))
-        from serialize import write_compact_size
+        from cryptogenesis.serialize import write_compact_size
 
         write_compact_size(stream.vch, len(self.vin))
         for txin in self.vin:
@@ -396,7 +396,7 @@ class Transaction:
     def unserialize(self, stream: "DataStream", n_type: int = 0, n_version: int = 101):
         """Unserialize from stream"""
         self.version = struct.unpack("<i", stream.read(4))[0]
-        from serialize import read_compact_size
+        from cryptogenesis.serialize import get_size_of_compact_size, read_compact_size
 
         vin_size, _ = read_compact_size(stream.vch, stream.n_read_pos)
         stream.n_read_pos += get_size_of_compact_size(vin_size)
@@ -473,6 +473,3 @@ class Transaction:
             f"vin={len(self.vin)}, vout={len(self.vout)}, "
             f"lock_time={self.lock_time})"
         )
-
-
-from serialize import get_size_of_compact_size  # noqa: E402

@@ -9,10 +9,15 @@ import struct
 import time
 from typing import List, Optional
 
-from crypto import double_sha256, hash_to_uint256
-from serialize import DataStream, get_size_of_compact_size, read_compact_size, write_compact_size
-from transaction import COIN, Transaction
-from uint256 import uint256
+from cryptogenesis.crypto import double_sha256, hash_to_uint256
+from cryptogenesis.serialize import (
+    DataStream,
+    get_size_of_compact_size,
+    read_compact_size,
+    write_compact_size,
+)
+from cryptogenesis.transaction import COIN, Transaction
+from cryptogenesis.uint256 import uint256
 
 # Genesis block hash
 HASH_GENESIS_BLOCK = uint256("0x000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f")
@@ -191,7 +196,7 @@ class Block:
 
     def unserialize(self, stream: "DataStream", stream_type: int = 0, version: int = 101):
         """Unserialize block from stream"""
-        from transaction import Transaction
+        from cryptogenesis.transaction import Transaction
 
         self.version = struct.unpack("<i", stream.read(4))[0]
         self.prev_block_hash = hash_to_uint256(stream.read(32))

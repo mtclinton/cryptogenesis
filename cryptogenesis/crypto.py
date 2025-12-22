@@ -8,7 +8,7 @@ Cryptographic functions: SHA256, RIPEMD160, ECDSA
 import hashlib
 from typing import Optional
 
-from uint256 import uint256
+from cryptogenesis.uint256 import uint256
 
 
 def sha256(data: bytes) -> bytes:
@@ -57,7 +57,7 @@ def hash_to_uint256(data: bytes) -> uint256:
 
 def serialize_hash(obj) -> uint256:
     """Serialize object and hash it"""
-    from serialize import DataStream
+    from cryptogenesis.serialize import DataStream
 
     stream = DataStream()
     stream.serialize(obj)
