@@ -154,9 +154,18 @@ function createNode(nodeData, index, total) {
     return node;
 }
 
+// Store current blockchain data
+let currentBlockchainData = null;
+
 // Update blockchain visualization
 function updateBlockchain(data) {
     console.log('updateBlockchain called with:', data);
+
+    // Store data for block list
+    currentBlockchainData = data;
+
+    // Update block list
+    updateBlockList(data.blocks || []);
 
     // Clear existing blocks
     while (blockchainGroup.children.length > 0) {
@@ -195,6 +204,136 @@ function updateBlockchain(data) {
     document.getElementById('blockCount').textContent = data.blocks.length;
     console.log(`Updated: height=${data.height}, blocks=${data.blocks.length}`);
 }
+
+// Update block list in sidebar
+function updateBlockList(blocks) {
+    const blockList = document.getElementById('blockList');
+    blockList.innerHTML = '';
+
+    // Reverse blocks to show newest first
+    const reversedBlocks = [...blocks].reverse();
+
+    reversedBlocks.forEach((blockData) => {
+        const blockItem = document.createElement('div');
+        blockItem.className = 'block-item';
+        blockItem.dataset.hash = blockData.hash;
+
+        const height = document.createElement('div');
+        height.className = 'block-height';
+        height.textContent = `Block #${blockData.height}`;
+
+        const hash = document.createElement('div');
+        hash.className = 'block-hash';
+        hash.textContent = blockData.hash;
+
+        const time = document.createElement('div');
+        time.className = 'block-time';
+        const date = new Date(blockData.time * 1000);
+        time.textContent = `Time: ${date.toLocaleString()}`;
+
+        const txs = document.createElement('div');
+        txs.className = 'block-txs';
+        txs.textContent = `${blockData.transactions || 0} transaction(s)`;
+
+        blockItem.appendChild(height);
+        blockItem.appendChild(hash);
+        blockItem.appendChild(time);
+        blockItem.appendChild(txs);
+
+        blockItem.addEventListener('click', () => {
+            showBlockDetails(blockData);
+            // Update selected state
+            document.querySelectorAll('.block-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            blockItem.classList.add('selected');
+        });
+
+        blockList.appendChild(blockItem);
+    });
+}
+
+// Show block details
+function showBlockDetails(blockData) {
+    const detailsPanel = document.getElementById('block-details');
+    const detailsContent = document.getElementById('detailsContent');
+
+    detailsContent.innerHTML = '';
+
+    // Block height
+    const heightDiv = document.createElement('div');
+    heightDiv.className = 'detail-item';
+    heightDiv.innerHTML = '<label>Height</label><div class="value">' + blockData.height + '</div>';
+    detailsContent.appendChild(heightDiv);
+
+    // Block hash
+    const hashDiv = document.createElement('div');
+    hashDiv.className = 'detail-item';
+    hashDiv.innerHTML = '<label>Hash</label><div class="value">' + blockData.hash + '</div>';
+    detailsContent.appendChild(hashDiv);
+
+    // Previous hash
+    const prevHashDiv = document.createElement('div');
+    prevHashDiv.className = 'detail-item';
+    prevHashDiv.innerHTML = '<label>Previous Hash</label><div class="value">' + (blockData.prev_hash || 'Genesis Block') + '</div>';
+    detailsContent.appendChild(prevHashDiv);
+
+    // Time
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'detail-item';
+    const date = new Date(blockData.time * 1000);
+    timeDiv.innerHTML = '<label>Timestamp</label><div class="value">' + date.toLocaleString() + '</div>';
+    detailsContent.appendChild(timeDiv);
+
+    // Transactions count
+    const txsCountDiv = document.createElement('div');
+    txsCountDiv.className = 'detail-item';
+    txsCountDiv.innerHTML = '<label>Transactions</label><div class="value">' + (blockData.transactions || 0) + '</div>';
+    detailsContent.appendChild(txsCountDiv);
+
+    // Transactions list
+    if (blockData.transactions > 0) {
+        const txsHeader = document.createElement('h4');
+        txsHeader.style.color = '#f0a000';
+        txsHeader.style.marginTop = '20px';
+        txsHeader.textContent = 'Transactions:';
+        detailsContent.appendChild(txsHeader);
+
+        // For now, show placeholder transactions
+        // In a real implementation, you'd fetch transaction details from the API
+        for (let i = 0; i < blockData.transactions; i++) {
+            const txItem = document.createElement('div');
+            txItem.className = 'transaction-item';
+
+            const txHash = document.createElement('div');
+            txHash.className = 'tx-hash';
+            txHash.textContent = `Transaction ${i + 1}${i === 0 ? ' (Coinbase)' : ''}`;
+
+            const txInfo = document.createElement('div');
+            txInfo.className = 'tx-info';
+            txInfo.textContent = i === 0 ? 'Coinbase transaction (block reward)' : 'Regular transaction';
+
+            txItem.appendChild(txHash);
+            txItem.appendChild(txInfo);
+            detailsContent.appendChild(txItem);
+        }
+    }
+
+    detailsPanel.classList.add('visible');
+}
+
+// Close block details
+document.addEventListener('DOMContentLoaded', () => {
+    const closeBtn = document.getElementById('close-details');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            document.getElementById('block-details').classList.remove('visible');
+            document.querySelectorAll('.block-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+        });
+    }
+});
 
 // Update nodes visualization
 function updateNodes(data) {
