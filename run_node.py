@@ -206,6 +206,83 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    # Start HTTP API server for blockchain data (for visualization)
+    def start_api_server():
+        """Start simple HTTP server to expose blockchain data"""
+        import json
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class BlockchainAPIHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/api/blockchain":
+                    try:
+                        chain = get_chain()
+                        best_index = chain.get_best_index()
+
+                        blocks = []
+                        current = best_index
+                        height = 0
+                        while current and height < 100:
+                            try:
+                                block = chain.get_block(current.block_hash)
+                                if not block:
+                                    break
+
+                                blocks.append(
+                                    {
+                                        "hash": current.block_hash.get_hex(),
+                                        "height": current.height,
+                                        "prev_hash": (
+                                            current.prev.block_hash.get_hex()
+                                            if current.prev
+                                            else None
+                                        ),
+                                        "time": (block.time if hasattr(block, "time") else 0),
+                                        "transactions": (
+                                            len(block.transactions)
+                                            if hasattr(block, "transactions")
+                                            else 0
+                                        ),
+                                    }
+                                )
+                                current = current.prev
+                                height += 1
+                            except Exception:
+                                break
+
+                        data = {
+                            "height": (
+                                chain.best_height
+                                if hasattr(chain, "best_height")
+                                else (best_index.height if best_index else 0)
+                            ),
+                            "blocks": blocks,
+                            "timestamp": time.time(),
+                        }
+
+                        self.send_response(200)
+                        self.send_header("Content-type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps(data).encode())
+                    except Exception as e:
+                        self.send_error(500, str(e))
+                else:
+                    self.send_error(404)
+
+            def log_message(self, format, *args):
+                pass  # Suppress logging
+
+        try:
+            api_server = HTTPServer(("0.0.0.0", 8081), BlockchainAPIHandler)
+            api_thread = threading.Thread(target=api_server.serve_forever, daemon=True)
+            api_thread.start()
+            print(f"[Node {node_id}] API server started on port 8081")
+        except Exception as e:
+            print(f"[Node {node_id}] Failed to start API server: {e}")
+
+    start_api_server()
+
     # Main loop - print status periodically
     print(f"\n[Node {node_id}] Running... (Press Ctrl+C to stop)")
     try:

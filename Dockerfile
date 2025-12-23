@@ -20,5 +20,9 @@ RUN pip install -e .
 # Copy node runner script
 COPY run_node.py .
 
+# Copy visualization server
+COPY visualization_server.py .
+COPY static/ ./static/
+
 # Default command (use -u for unbuffered output)
 CMD ["python", "-u", "run_node.py"]

@@ -16,6 +16,7 @@ services:
         ipv4_address: 192.168.200.11
     ports:
       - "8333:8333"
+      - "8081:8081"
     command: python run_node.py --node-id 1 --port 8333 --peers node2:8333,node3:8333,node4:8333,node5:8333
 
   node2:
@@ -134,6 +135,22 @@ services:
     ports:
       - "8342:8333"
     command: python run_node.py --node-id 10 --port 8333 --peers node4:8333,node9:8333
+
+  visualization:
+    build: .
+    container_name: bitcoin-visualization
+    environment:
+      - VISUALIZATION_PORT=8080
+      - TEST_MODE=1
+      - NODE_COUNT=10
+    networks:
+      bitcoin-network:
+        ipv4_address: 192.168.200.100
+    ports:
+      - "8087:8080"
+    command: python visualization_server.py
+    depends_on:
+      - node1
 
 networks:
   bitcoin-network:
