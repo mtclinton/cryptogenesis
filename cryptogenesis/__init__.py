@@ -25,6 +25,14 @@ from cryptogenesis.crypto import (
     sha256,
 )
 from cryptogenesis.mempool import InPoint, Mempool, accept_transaction, get_mempool
+from cryptogenesis.mining import (
+    bitcoin_miner,
+    create_new_block,
+    get_generate_bitcoins,
+    set_generate_bitcoins,
+    start_mining,
+    stop_mining,
+)
 from cryptogenesis.network import (
     MESSAGE_START,
     MSG_BLOCK,
@@ -54,6 +62,7 @@ from cryptogenesis.transaction import (
     CENT,
     COIN,
     COINBASE_MATURITY,
+    DUST_THRESHOLD,
     MAX_SIZE,
     OutPoint,
     Script,
@@ -62,6 +71,7 @@ from cryptogenesis.transaction import (
     TxOut,
 )
 from cryptogenesis.uint256 import uint160, uint256
+from cryptogenesis.util import add_time_data, get_adjusted_time, get_time
 from cryptogenesis.utxo import DiskTxPos, TxDB, TxIndex, get_txdb
 from cryptogenesis.wallet import (
     MerkleTx,
@@ -107,6 +117,7 @@ __all__ = [
     "COIN",
     "CENT",
     "COINBASE_MATURITY",
+    "DUST_THRESHOLD",
     "MAX_SIZE",
     "OutPoint",
     "Script",
@@ -144,6 +155,10 @@ __all__ = [
     "TxDB",
     "TxIndex",
     "get_txdb",
+    # Util
+    "add_time_data",
+    "get_adjusted_time",
+    "get_time",
     # Wallet
     "MerkleTx",
     "WalletTx",
@@ -157,4 +172,11 @@ __all__ = [
     "is_mine",
     "reaccept_wallet_transactions",
     "relay_wallet_transactions",
+    # Mining
+    "bitcoin_miner",
+    "create_new_block",
+    "get_generate_bitcoins",
+    "set_generate_bitcoins",
+    "start_mining",
+    "stop_mining",
 ]
