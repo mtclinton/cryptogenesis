@@ -26,6 +26,8 @@ f_generate_bitcoins = False
 f_generate_bitcoins_lock = threading.Lock()
 n_transactions_updated = 0
 n_transactions_updated_lock = threading.Lock()
+# Mining rate control (for testing)
+MIN_BLOCK_INTERVAL = 30  # Minimum seconds between blocks (for testing)
 
 
 def set_generate_bitcoins(value: bool):
@@ -182,12 +184,18 @@ def bitcoin_miner() -> bool:
     """
     Main mining function (matches Bitcoin v0.1 BitcoinMiner)
     """
+    import os
+
     print("BitcoinMiner started")
     from cryptogenesis.wallet import add_key
 
     key = Key()
     key.generate_new_key()
     bn_extra_nonce = 0
+
+    # Check if we should enforce minimum block interval (for testing)
+    test_mode = os.environ.get("TEST_MODE", "").lower() in ("1", "true", "yes")
+    min_interval = MIN_BLOCK_INTERVAL if test_mode else 0
 
     while get_generate_bitcoins():
         time.sleep(0.05)  # Sleep 50ms
@@ -202,6 +210,18 @@ def bitcoin_miner() -> bool:
         pindex_prev = chain.best_index
         if not pindex_prev:
             continue
+
+        # Enforce minimum time between blocks (for testing)
+        # Check the chain's best block time (works for both our blocks and network blocks)
+        if min_interval > 0:
+            best_block = chain.get_block(pindex_prev.block_hash)
+            if best_block and hasattr(best_block, "time"):
+                best_block_time = best_block.time
+                time_since_last = time.time() - best_block_time
+                if time_since_last < min_interval:
+                    sleep_time = min_interval - time_since_last
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
 
         n_bits = get_next_work_required(pindex_prev)
 
