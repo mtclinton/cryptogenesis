@@ -1206,6 +1206,7 @@ def start_node() -> Tuple[bool, str]:
     try:
         listen_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         listen_socket.setblocking(False)
         ip_str, port = addr_local_host.get_sockaddr()
         listen_socket.bind((ip_str, port))

@@ -35,7 +35,10 @@ def get_adjusted_time() -> int:
         Current time + time offset (adjusted for network clock skew)
     """
     with _time_offset_lock:
-        return get_time() + _n_time_offset
+        # Cap time offset to reasonable range (±2 hours) to prevent overflow
+        # This prevents blocks from being rejected due to invalid timestamps
+        capped_offset = max(-7200, min(7200, _n_time_offset))
+        return get_time() + capped_offset
 
 
 def add_time_data(ip: int, n_time: int) -> None:

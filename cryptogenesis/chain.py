@@ -381,7 +381,19 @@ class BlockChain:
         #    is still in orphan_blocks but will be erased after acceptance
         # This matches Bitcoin v0.1 behavior where AcceptBlock() only checks mapBlockIndex
 
-        # Get previous block index
+        # Handle genesis block specially (no previous block)
+        if block_hash == HASH_GENESIS_BLOCK:
+            if block.prev_block_hash != uint256(0):
+                return error("AcceptBlock() : genesis block must have null prev hash")
+            # Genesis block doesn't need a previous block
+            # Add to index and set as best if chain is empty
+            if not self.add_to_block_index(block):
+                return False
+            # Store block
+            self.store_block(block)
+            return True
+
+        # Get previous block index (for non-genesis blocks)
         prev_index = self.get_block_index(block.prev_block_hash)
         if not prev_index:
             return error("AcceptBlock() : prev block not found")
