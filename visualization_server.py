@@ -233,15 +233,153 @@ def get_visualization_html() -> str:
         .stat {
             color: #0f0;
         }
+        #sidebar {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 300px;
+            height: 100vh;
+            background: rgba(20, 20, 20, 0.95);
+            border-right: 2px solid #333;
+            overflow-y: auto;
+            z-index: 200;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        #sidebar h3 {
+            margin: 0 0 15px 0;
+            color: #f0a000;
+            font-size: 18px;
+        }
+        .block-item {
+            background: rgba(40, 40, 40, 0.8);
+            border: 1px solid #555;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .block-item:hover {
+            background: rgba(60, 60, 60, 0.9);
+            border-color: #f0a000;
+        }
+        .block-item.selected {
+            background: rgba(80, 60, 0, 0.9);
+            border-color: #f0a000;
+        }
+        .block-item .block-height {
+            font-weight: bold;
+            color: #0f0;
+            font-size: 16px;
+        }
+        .block-item .block-hash {
+            font-size: 11px;
+            color: #aaa;
+            word-break: break-all;
+            margin-top: 5px;
+        }
+        .block-item .block-time {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+        .block-item .block-txs {
+            font-size: 12px;
+            color: #0ff;
+            margin-top: 5px;
+        }
+        #block-details {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 350px;
+            height: 100vh;
+            background: rgba(20, 20, 20, 0.95);
+            border-left: 2px solid #333;
+            overflow-y: auto;
+            z-index: 200;
+            padding: 15px;
+            box-sizing: border-box;
+            display: none;
+        }
+        #block-details.visible {
+            display: block;
+        }
+        #block-details h3 {
+            margin: 0 0 15px 0;
+            color: #f0a000;
+            font-size: 18px;
+        }
+        .detail-item {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(40, 40, 40, 0.8);
+            border-radius: 5px;
+        }
+        .detail-item label {
+            display: block;
+            color: #aaa;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        .detail-item .value {
+            color: #fff;
+            font-size: 14px;
+            word-break: break-all;
+        }
+        .transaction-item {
+            background: rgba(30, 30, 30, 0.8);
+            border: 1px solid #444;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .transaction-item .tx-hash {
+            font-size: 11px;
+            color: #0ff;
+            word-break: break-all;
+            margin-bottom: 5px;
+        }
+        .transaction-item .tx-info {
+            font-size: 12px;
+            color: #aaa;
+        }
+        #close-details {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #f00;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        #close-details:hover {
+            background: #c00;
+        }
     </style>
 </head>
 <body>
+    <div id="sidebar">
+        <h3>Blocks</h3>
+        <div id="blockList"></div>
+    </div>
+
     <div id="info">
         <h2>Bitcoin Network Visualization</h2>
         <div>Height: <span class="stat" id="height">0</span></div>
         <div>Blocks: <span class="stat" id="blockCount">0</span></div>
         <div>Nodes: <span class="stat" id="nodeCount">0</span></div>
         <div>Last Update: <span class="stat" id="lastUpdate">-</span></div>
+    </div>
+
+    <div id="block-details">
+        <button id="close-details">×</button>
+        <h3>Block Details</h3>
+        <div id="detailsContent"></div>
     </div>
 
     <script type="importmap">
