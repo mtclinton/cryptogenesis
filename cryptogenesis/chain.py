@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 from cryptogenesis.block import HASH_GENESIS_BLOCK, Block, BlockIndex, get_next_work_required
 from cryptogenesis.transaction import Transaction
 from cryptogenesis.uint256 import uint256
+from cryptogenesis.util import error
 
 
 class BlockChain:
@@ -227,8 +228,10 @@ class BlockChain:
             )
 
             if not success:
-                print(f"ConnectBlock() : ConnectInputs failed for {tx.get_hash().get_hex()[:6]}")
-                return False
+                return error(
+                    "ConnectBlock() : ConnectInputs failed for %s",
+                    tx.get_hash().get_hex()[:6],
+                )
 
             total_fees += fees
 
@@ -325,11 +328,16 @@ class BlockChain:
             block = self.get_block(pindex.block_hash) if pindex.block_hash else None
             if not block:
                 # Need to load block - for now, this is an error
-                print(f"Reorganize() : block {pindex.block_hash.get_hex()[:14]} not found")
-                return False
+                return error(
+                    "Reorganize() : block %s not found",
+                    pindex.block_hash.get_hex()[:14],
+                )
 
             if not self._connect_block(block, pindex):
-                print(f"Reorganize() : ConnectBlock failed for {pindex.block_hash.get_hex()[:14]}")
+                return error(
+                    "Reorganize() : ConnectBlock failed for %s",
+                    pindex.block_hash.get_hex()[:14],
+                )
                 # Delete the rest of this branch
                 for j in range(connect.index(pindex), len(connect)):
                     pindex_del = connect[j]
@@ -363,31 +371,35 @@ class BlockChain:
         """Accept a block into the chain"""
         block_hash = block.get_hash()
 
-        # Check for duplicate
+        # Check for duplicate in block index (matches Bitcoin v0.1 AcceptBlock)
         if self.has_block(block_hash):
-            print("AcceptBlock() : block already in mapBlockIndex")
-            return False
+            return error("AcceptBlock() : block already in mapBlockIndex")
+
+        # Note: We don't check orphan_blocks here because:
+        # 1. ProcessBlock() already checks both mapBlockIndex and mapOrphanBlocks
+        # 2. When accept_block() is called from orphan processing, the block
+        #    is still in orphan_blocks but will be erased after acceptance
+        # This matches Bitcoin v0.1 behavior where AcceptBlock() only checks mapBlockIndex
 
         # Get previous block index
         prev_index = self.get_block_index(block.prev_block_hash)
         if not prev_index:
-            print("AcceptBlock() : prev block not found")
-            return False
+            return error("AcceptBlock() : prev block not found")
 
-        # Check timestamp against previous
+        # Check timestamp against previous block's median time past
+        # Blocks must have timestamp > median of last 11 blocks (matches Bitcoin v0.1)
         median_time = prev_index.get_median_time_past()
         if block.time <= median_time:
-            print("AcceptBlock() : block's timestamp is too early")
-            return False
+            return error("AcceptBlock() : block's timestamp is too early")
 
         # Check proof of work
         expected_bits = get_next_work_required(prev_index)
         if block.bits != expected_bits:
-            print(
-                f"AcceptBlock() : incorrect proof of work "
-                f"(expected {expected_bits:x}, got {block.bits:x})"
+            return error(
+                "AcceptBlock() : incorrect proof of work " "(expected %x, got %x)",
+                expected_bits,
+                block.bits,
             )
-            return False
 
         # Store block (in-memory for now)
         # In full implementation, would write to disk here
@@ -395,8 +407,7 @@ class BlockChain:
 
         # Add to block index
         if not self.add_to_block_index(block, file_num=0, block_pos=0):
-            print("AcceptBlock() : AddToBlockIndex failed")
-            return False
+            return error("AcceptBlock() : AddToBlockIndex failed")
 
         # Relay if it's the new best
         if self.best_hash == block_hash:
@@ -409,24 +420,32 @@ class BlockChain:
         return True
 
     def process_block(self, block: Block) -> bool:
-        """Process a block (main entry point)"""
+        """
+        Process a block (main entry point)
+        Matches Bitcoin v0.1 ProcessBlock()
+        """
         block_hash = block.get_hash()
 
-        # Check for duplicate
+        # Check for duplicate in block index (matches Bitcoin v0.1)
         if self.has_block(block_hash):
             index = self.get_block_index(block_hash)
             height = index.height if index else -1
-            print(f"ProcessBlock() : already have block {height} {block_hash.get_hex()[:14]}")
-            return False
+            return error(
+                "ProcessBlock() : already have block %d %s",
+                height,
+                block_hash.get_hex()[:14],
+            )
 
+        # Check for duplicate in orphan blocks (matches Bitcoin v0.1)
         if self.has_orphan_block(block_hash):
-            print(f"ProcessBlock() : already have block (orphan) {block_hash.get_hex()[:14]}")
-            return False
+            return error(
+                "ProcessBlock() : already have block (orphan) %s",
+                block_hash.get_hex()[:14],
+            )
 
         # Preliminary checks
         if not block.check_block():
-            print("ProcessBlock() : CheckBlock FAILED")
-            return False
+            return error("ProcessBlock() : CheckBlock FAILED")
 
         # If we don't have the previous block, store as orphan
         if not self.has_block(block.prev_block_hash):
@@ -436,8 +455,7 @@ class BlockChain:
 
         # Accept block
         if not self.accept_block(block):
-            print("ProcessBlock() : AcceptBlock FAILED")
-            return False
+            return error("ProcessBlock() : AcceptBlock FAILED")
 
         # Recursively process any orphan blocks that depended on this one
         work_queue = [block_hash]

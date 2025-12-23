@@ -6,7 +6,6 @@ Block and blockchain structures
 """
 
 import struct
-import time
 from typing import List, Optional
 
 from cryptogenesis.crypto import double_sha256, hash_to_uint256
@@ -70,7 +69,12 @@ class BlockIndex:
         return self.next is not None or self == best_index
 
     def get_median_time_past(self) -> int:
-        """Get median time past (11 blocks)"""
+        """
+        Get median time past (11 blocks)
+        Matches Bitcoin v0.1 GetMedianTimePast()
+
+        Returns the median timestamp of the last 11 blocks (nMedianTimeSpan=11)
+        """
         median_time_span = 11
         times = []
         index = self
@@ -351,14 +355,60 @@ class Block:
         else:
             self.transactions = []
 
+    def get_serialize_size(self, n_type: int = 0, n_version: int = 101) -> int:
+        """
+        Get serialized size of block
+        Equivalent to GetSerializeSize(*this, SER_DISK) in Bitcoin v0.1
+        """
+        from cryptogenesis.serialize import SER_GETHASH, get_serialize_size
+
+        size = 0
+
+        # Version (if not hashing)
+        if not (n_type & SER_GETHASH):
+            size += 4  # int32
+
+        # Previous block hash
+        size += 32  # uint256
+
+        # Merkle root
+        size += 32  # uint256
+
+        # Time
+        size += 4  # uint32
+
+        # Bits
+        size += 4  # uint32
+
+        # Nonce
+        size += 4  # uint32
+
+        # Transaction count (compact size)
+        size += get_size_of_compact_size(len(self.transactions))
+
+        # Transactions
+        for tx in self.transactions:
+            size += get_serialize_size(tx, n_type, n_version)
+
+        return size
+
     def check_block(self) -> bool:
         """Check block validity"""
-        # Size limits
+        from cryptogenesis.serialize import SER_DISK
+        from cryptogenesis.transaction import MAX_SIZE
+
+        # Size limits (matches Bitcoin v0.1 CheckBlock)
         if len(self.transactions) == 0:
             return False
+        if len(self.transactions) > MAX_SIZE:
+            return False
+        if self.get_serialize_size(SER_DISK) > MAX_SIZE:
+            return False
 
-        # Check timestamp
-        current_time = int(time.time())
+        # Check timestamp (using adjusted time to handle clock skew)
+        from cryptogenesis.util import get_adjusted_time
+
+        current_time = get_adjusted_time()
         if self.time > current_time + 2 * 60 * 60:
             return False
 
@@ -377,9 +427,13 @@ class Block:
                 return False
 
         # Check proof of work
-        # (Simplified - would need BigNum for full check)
-        block_hash = self.get_hash()
+        # Check nBits minimum work (target must not exceed proof-of-work limit)
         target = self.get_target()
+        if target > PROOF_OF_WORK_LIMIT:
+            return False
+
+        # Check hash matches nBits
+        block_hash = self.get_hash()
         if block_hash > target:
             return False
 

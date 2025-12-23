@@ -6,7 +6,6 @@ Wallet functionality - CWallet, CWalletTx, CMerkleTx
 """
 
 import threading
-import time
 from typing import Dict, List, Optional, Set, Tuple
 
 from cryptogenesis.block import Block
@@ -14,6 +13,7 @@ from cryptogenesis.chain import get_chain
 from cryptogenesis.crypto import Key, hash160
 from cryptogenesis.transaction import COINBASE_MATURITY, Script, Transaction, TxIn, TxOut
 from cryptogenesis.uint256 import uint160, uint256
+from cryptogenesis.util import error
 from cryptogenesis.utxo import TxDB, get_txdb
 
 # Global wallet state (matches Bitcoin v0.1)
@@ -91,7 +91,7 @@ class MerkleTx(Transaction):
         if self.n_index == -1:
             self.v_merkle_branch.clear()
             self.n_index = -1
-            print("ERROR: SetMerkleBranch() : couldn't find tx in block")
+            error("SetMerkleBranch() : couldn't find tx in block")
             return 0
 
         # Fill in merkle branch
@@ -353,7 +353,9 @@ def add_to_wallet(wtx_in: WalletTx) -> bool:
             wtx = WalletTx(wtx_in)
             map_wallet[hash_tx] = wtx
             f_inserted_new = True
-            wtx.n_time_received = int(time.time())
+            from cryptogenesis.util import get_adjusted_time
+
+            wtx.n_time_received = get_adjusted_time()
 
         print(f"AddToWallet {hash_tx.get_hex()[:6]}  {'new' if f_inserted_new else 'update'}")
 

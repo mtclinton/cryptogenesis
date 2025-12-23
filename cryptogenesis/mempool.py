@@ -6,12 +6,17 @@ Transaction pool (mempool) management
 """
 
 import threading
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from typing import Dict, List, Optional
 
 from cryptogenesis.serialize import SER_NETWORK, DataStream
 from cryptogenesis.transaction import OutPoint, Transaction
 from cryptogenesis.uint256 import uint256
+from cryptogenesis.util import error
+
+# Maximum number of orphan transactions to keep in memory
+# Prevents unbounded growth of orphan pool
+MAX_ORPHAN_TRANSACTIONS = 1000
 
 
 class InPoint:
@@ -44,8 +49,9 @@ class Mempool:
         self.next_tx_lock = threading.Lock()
 
         # Orphan transactions (transactions with missing inputs)
+        # Use OrderedDict to track insertion order for FIFO eviction
         # Map of tx hash to serialized transaction data
-        self.orphan_transactions: Dict[uint256, bytes] = {}
+        self.orphan_transactions: OrderedDict[uint256, bytes] = OrderedDict()
         # Map of prevout hash to list of orphan transaction hashes
         self.orphan_transactions_by_prev: Dict[uint256, List[uint256]] = defaultdict(list)
         self.orphan_lock = threading.Lock()
@@ -106,7 +112,10 @@ class Mempool:
             return outpoint in self.next_tx
 
     def add_orphan_transaction(self, tx_data: bytes):
-        """Add orphan transaction (transaction with missing inputs)"""
+        """
+        Add orphan transaction (transaction with missing inputs)
+        Enforces MAX_ORPHAN_TRANSACTIONS limit by evicting oldest entries
+        """
         # Deserialize to get the transaction
         stream = DataStream(SER_NETWORK)
         stream.vch = bytearray(tx_data)
@@ -120,8 +129,17 @@ class Mempool:
 
         with self.orphan_lock:
             if tx_hash in self.orphan_transactions:
+                # Move to end (most recently used)
+                self.orphan_transactions.move_to_end(tx_hash)
                 return
 
+            # Enforce orphan transaction limit (evict oldest if needed)
+            while len(self.orphan_transactions) >= MAX_ORPHAN_TRANSACTIONS:
+                # Evict oldest orphan transaction (FIFO)
+                oldest_hash, _ = self.orphan_transactions.popitem(last=False)
+                self._erase_orphan_transaction_internal(oldest_hash)
+
+            # Add new orphan transaction
             self.orphan_transactions[tx_hash] = tx_data
 
             # Index by previous transaction hashes
@@ -129,34 +147,40 @@ class Mempool:
                 if not txin.prevout.is_null():
                     self.orphan_transactions_by_prev[txin.prevout.hash].append(tx_hash)
 
+    def _erase_orphan_transaction_internal(self, tx_hash: uint256):
+        """
+        Internal method to erase orphan transaction (assumes lock is held)
+        """
+        if tx_hash not in self.orphan_transactions:
+            return
+
+        tx_data = self.orphan_transactions[tx_hash]
+
+        # Deserialize to get transaction
+        stream = DataStream(SER_NETWORK)
+        stream.vch = bytearray(tx_data)
+        tx = Transaction()
+        try:
+            tx.unserialize(stream, SER_NETWORK)
+        except Exception:
+            pass
+        else:
+            # Remove from index
+            for txin in tx.vin:
+                if not txin.prevout.is_null():
+                    prev_hash = txin.prevout.hash
+                    if prev_hash in self.orphan_transactions_by_prev:
+                        if tx_hash in self.orphan_transactions_by_prev[prev_hash]:
+                            self.orphan_transactions_by_prev[prev_hash].remove(tx_hash)
+                        if not self.orphan_transactions_by_prev[prev_hash]:
+                            del self.orphan_transactions_by_prev[prev_hash]
+
+        del self.orphan_transactions[tx_hash]
+
     def erase_orphan_transaction(self, tx_hash: uint256):
         """Remove orphan transaction"""
         with self.orphan_lock:
-            if tx_hash not in self.orphan_transactions:
-                return
-
-            tx_data = self.orphan_transactions[tx_hash]
-
-            # Deserialize to get transaction
-            stream = DataStream(SER_NETWORK)
-            stream.vch = bytearray(tx_data)
-            tx = Transaction()
-            try:
-                tx.unserialize(stream, SER_NETWORK)
-            except Exception:
-                pass
-            else:
-                # Remove from index
-                for txin in tx.vin:
-                    if not txin.prevout.is_null():
-                        prev_hash = txin.prevout.hash
-                        if prev_hash in self.orphan_transactions_by_prev:
-                            if tx_hash in self.orphan_transactions_by_prev[prev_hash]:
-                                self.orphan_transactions_by_prev[prev_hash].remove(tx_hash)
-                            if not self.orphan_transactions_by_prev[prev_hash]:
-                                del self.orphan_transactions_by_prev[prev_hash]
-
-            del self.orphan_transactions[tx_hash]
+            self._erase_orphan_transaction_internal(tx_hash)
 
     def get_orphan_transactions_by_prev(self, prev_hash: uint256) -> List[uint256]:
         """Get orphan transactions that depend on a previous transaction"""
@@ -232,13 +256,19 @@ def accept_transaction(
 
     # Coinbase is only valid in a block, not as a loose transaction
     if tx.is_coinbase():
+        error("AcceptTransaction() : coinbase as individual tx")
         return False, None
 
-    # Basic transaction check
+    # Basic transaction check (includes size limit check)
     if not tx.check_transaction():
+        error("AcceptTransaction() : CheckTransaction failed")
         return False, None
 
     tx_hash = tx.get_hash()
+
+    # Calculate minimum fee required (strict enforcement)
+    # For mempool acceptance, use discount=false (strict fee requirement)
+    n_min_fee = tx.get_min_fee(f_discount=False)
 
     # Do we already have it?
     if mempool.has_transaction(tx_hash):
@@ -276,7 +306,7 @@ def accept_transaction(
 
         txdb = get_txdb()
 
-        # Use ConnectInputs to validate inputs
+        # Use ConnectInputs to validate inputs with strict minimum fee enforcement
         success, fees = tx.connect_inputs(  # type: ignore[attr-defined]
             txdb,
             map_test_pool={},
@@ -285,7 +315,7 @@ def accept_transaction(
             fees=0,
             is_block=False,
             is_miner=False,
-            min_fee=0,
+            min_fee=n_min_fee,
         )
 
         if not success:
@@ -302,6 +332,11 @@ def accept_transaction(
                     if not chain.has_block(outpoint.hash) and not txdb.contains_tx(outpoint.hash):
                         missing_inputs = True
                         break
+            if not missing_inputs:
+                error(
+                    "AcceptTransaction() : ConnectInputs failed %s",
+                    tx_hash.get_hex()[:6],
+                )
             return False, missing_inputs
 
     # Store transaction in memory

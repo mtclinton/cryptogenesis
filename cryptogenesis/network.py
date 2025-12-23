@@ -97,7 +97,9 @@ class Address:
         self.reserved = self.IPv4_PREFIX
         self.ip = ip
         self.port = port
-        self.time = int(time.time())
+        from cryptogenesis.util import get_adjusted_time
+
+        self.time = get_adjusted_time()
         self.last_failed = 0
 
     @classmethod
@@ -239,6 +241,19 @@ addresses_lock = threading.Lock()
 f_shutdown = False
 
 
+def check_for_shutdown(thread_id: int = -1) -> bool:
+    """
+    Check if shutdown was requested and exit thread if so
+    Matches Bitcoin v0.1 CheckForShutdown()
+    """
+    if f_shutdown:
+        if thread_id != -1 and thread_id < len(threads_running):
+            threads_running[thread_id] = False
+        # In Python, threads exit when function returns
+        return True
+    return False
+
+
 class Node:
     """Network node (peer connection)"""
 
@@ -280,9 +295,11 @@ class Node:
         self.subscribe: List[bool] = [False] * 256
 
         # Push version message
-        n_time = int(time.time())
+        from cryptogenesis.util import get_adjusted_time
+
+        n_time = get_adjusted_time()
         if not inbound:
-            n_time = int(time.time())
+            n_time = get_adjusted_time()
         self.push_message("version", self.VERSION, n_local_services, n_time, addr)
 
     def add_ref(self, timeout: int = 0):
@@ -298,7 +315,9 @@ class Node:
 
     def get_ref_count(self) -> int:
         """Get reference count"""
-        return max(self.ref_count, 0) + (1 if int(time.time()) < self.release_time else 0)
+        from cryptogenesis.util import get_adjusted_time
+
+        return max(self.ref_count, 0) + (1 if get_adjusted_time() < self.release_time else 0)
 
     def ready_to_disconnect(self) -> bool:
         """Check if ready to disconnect"""
@@ -387,8 +406,16 @@ def connect_socket(addr: Address) -> Optional[socket.socket]:
         sock.connect((ip_str, port))
         sock.settimeout(None)
         return sock
+    except socket.error as e:
+        # More detailed error reporting (matches Bitcoin v0.1)
+        errno = getattr(e, "errno", None)
+        if errno:
+            print(f"Connect failed: {addr} (error {errno})")
+        else:
+            print(f"Connect failed: {addr} ({e})")
+        return None
     except Exception as e:
-        print(f"Connect failed: {e}")
+        print(f"Connect failed: {addr} ({e})")
         return None
 
 
@@ -435,7 +462,9 @@ def connect_node(addr: Address, timeout: int = 0) -> Optional[Node]:
     else:
         with addresses_lock:
             if addr.get_key() in addresses:
-                addresses[addr.get_key()].last_failed = int(time.time())
+                from cryptogenesis.util import get_adjusted_time
+
+                addresses[addr.get_key()].last_failed = get_adjusted_time()
         return None
 
 
@@ -478,6 +507,8 @@ def thread_socket_handler(listen_sock: socket.socket):
     prev_node_count = 0
 
     while not f_shutdown:
+        if check_for_shutdown(0):
+            break
         # Disconnect nodes
         with nodes_lock:
             # Disconnect duplicate connections
@@ -514,7 +545,9 @@ def thread_socket_handler(listen_sock: socket.socket):
                 ):
                     nodes.remove(node)
                     node.disconnect_node()
-                    node.release_time = max(node.release_time, int(time.time()) + 5 * 60)
+                    from cryptogenesis.util import get_adjusted_time
+
+                    node.release_time = max(node.release_time, get_adjusted_time() + 5 * 60)
                     if node.is_network_node:
                         node.release()
                     nodes_disconnected.append(node)
@@ -550,7 +583,18 @@ def thread_socket_handler(listen_sock: socket.socket):
                 time.sleep(0.05)
                 continue
 
-            readable, writable, _ = select.select(read_list, write_list, [], 0.05)
+            try:
+                readable, writable, _ = select.select(read_list, write_list, [], 0.05)
+            except (OSError, ValueError) as e:
+                # Handle select errors (matches Bitcoin v0.1)
+                errno = getattr(e, "errno", None)
+                if errno:
+                    print(f"select failed: {errno}")
+                else:
+                    print(f"select failed: {e}")
+                # Reset select lists and continue
+                time.sleep(0.05)
+                continue
 
             # Accept new connections
             if listen_sock in readable:
@@ -565,6 +609,15 @@ def thread_socket_handler(listen_sock: socket.socket):
                     node.add_ref()
                     with nodes_lock:
                         nodes.append(node)
+                except socket.error as e:
+                    # More detailed error reporting (matches Bitcoin v0.1)
+                    errno = getattr(e, "errno", None)
+                    if errno:
+                        ewouldblock = getattr(socket, "EWOULDBLOCK", None)
+                        if ewouldblock and errno != ewouldblock:
+                            print(f"ERROR ThreadSocketHandler accept failed: {errno}")
+                    else:
+                        print(f"accept failed: {e}")
                 except Exception as e:
                     print(f"accept failed: {e}")
 
@@ -599,7 +652,12 @@ def thread_socket_handler(listen_sock: socket.socket):
                             errnos = errnos + (eintr,)  # type: ignore[assignment]
                         if e.errno not in errnos:
                             if not node.disconnect:
-                                print(f"recv failed: {e}")
+                                # More detailed error reporting (matches Bitcoin v0.1)
+                                errno = getattr(e, "errno", None)
+                                if errno:
+                                    print(f"recv failed: {errno}")
+                                else:
+                                    print(f"recv failed: {e}")
                             node.disconnect = True
 
                 # Send
@@ -613,7 +671,12 @@ def thread_socket_handler(listen_sock: socket.socket):
                                 elif node.ready_to_disconnect():
                                     node.v_send.vch.clear()
                     except socket.error as e:
-                        print(f"send error: {e}")
+                        # More detailed error reporting (matches Bitcoin v0.1)
+                        errno = getattr(e, "errno", None)
+                        if errno:
+                            print(f"send error {errno}")
+                        else:
+                            print(f"send error: {e}")
                         if node.ready_to_disconnect():
                             node.v_send.vch.clear()
 
@@ -630,6 +693,8 @@ def thread_open_connections():
     max_connections = 15
 
     while not f_shutdown:
+        if check_for_shutdown(1):
+            break
         time.sleep(0.5)
 
         with nodes_lock:
@@ -669,7 +734,9 @@ def thread_open_connections():
                     if (addr.ip & ipc_mask) != ipc:
                         continue
                     randomizer = (addr.last_failed * addr.ip * 7777) % 20000
-                    if int(time.time()) - addr.last_failed > delay * randomizer / 10000:
+                    from cryptogenesis.util import get_adjusted_time
+
+                    if get_adjusted_time() - addr.last_failed > delay * randomizer / 10000:
                         if addr.ip not in map_ip:
                             map_ip[addr.ip] = []
                         map_ip[addr.ip].append(addr)
@@ -787,7 +854,13 @@ def process_message(node: Node, command: str, message_data: bytes):
 
         node.version = struct.unpack("<i", stream.read(4))[0]
         node.services = struct.unpack("<Q", stream.read(8))[0]
-        struct.unpack("<q", stream.read(8))[0]  # Read and discard nTime
+        n_time = struct.unpack("<q", stream.read(8))[0]
+
+        # Add time data for clock skew adjustment
+        from cryptogenesis.util import add_time_data
+
+        add_time_data(node.addr.ip, n_time)
+
         addr_me = Address()
         addr_me.unserialize(stream, SER_NETWORK, Node.VERSION)
 
@@ -1014,7 +1087,9 @@ def process_message(node: Node, command: str, message_data: bytes):
 
     elif command == "getaddr":
         node.addr_to_send.clear()
-        n_since = int(time.time()) - 60 * 60  # Last hour
+        from cryptogenesis.util import get_adjusted_time
+
+        n_since = get_adjusted_time() - 60 * 60  # Last hour
         with addresses_lock:
             for addr in addresses.values():
                 if f_shutdown:
@@ -1085,6 +1160,8 @@ def thread_message_handler():
     """Message handler thread - processes incoming messages"""
     print("ThreadMessageHandler started")
     while not f_shutdown:
+        if check_for_shutdown(2):
+            break
         nodes_copy = []
         with nodes_lock:
             nodes_copy = list(nodes)
@@ -1134,6 +1211,18 @@ def start_node() -> Tuple[bool, str]:
         listen_socket.bind((ip_str, port))
         listen_socket.listen(5)
         print(f"bound to addrLocalHost = {addr_local_host}\n")
+    except socket.error as e:
+        # More detailed error reporting (matches Bitcoin v0.1)
+        errno = getattr(e, "errno", None)
+        if errno:
+            error = (
+                f"Error: Couldn't open socket for incoming connections "
+                f"(socket returned error {errno})"
+            )
+        else:
+            error = f"Error: Couldn't open socket for incoming connections: {e}"
+        print(error)
+        return False, error
     except Exception as e:
         error = f"Error: Unable to bind to port: {e}"
         print(error)
