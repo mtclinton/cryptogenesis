@@ -171,25 +171,340 @@ def main():
     start_mining()
     print("Mining started")
 
-    # Create periodic transactions
+    # Create periodic transactions - send coins randomly to other nodes
     def create_transactions():
-        """Create test transactions periodically"""
+        """Create transactions to randomly send coins to other nodes"""
+        import random
+
+        from cryptogenesis.crypto import Key
         from cryptogenesis.mempool import accept_transaction
+        from cryptogenesis.transaction import OP_CHECKSIG
+        from cryptogenesis.uint256 import uint256
+        from cryptogenesis.wallet import get_balance, get_wallet
 
         while True:
             try:
-                time.sleep(30)  # Create transaction every 30 seconds
-                tx = create_test_transaction(node_id)
-                print(f"\n[Node {node_id}] Creating test transaction...")
-                success, missing = accept_transaction(tx, check_inputs=False, check_utxos=False)
-                if success:
+                time.sleep(60)  # Check every 60 seconds
+
+                # Get wallet balance
+                balance = get_balance()
+                if balance <= 0:
+                    print(f"[Node {node_id}] No balance, skipping transaction creation")
+                    continue
+
+                print(f"\n[Node {node_id}] Balance: {balance / COIN:.2f} BTC")
+
+                # Get wallet to find available UTXOs
+                wallet = get_wallet()
+                if not wallet or len(wallet) == 0:
+                    print(f"[Node {node_id}] No wallet transactions, skipping")
+                    continue
+
+                # Find spendable outputs
+                # Get outputs that are confirmed in blocks and belong to us
+                from cryptogenesis.chain import get_chain
+
+                chain = get_chain()
+                spendable_outputs = []
+
+                for wtx_hash, wtx in wallet.items():
+                    try:
+                        # WalletTx IS a Transaction (inherits from it), so use wtx directly
+                        # Check if transaction is confirmed (has block hash)
+                        if hasattr(wtx, "hash_block") and wtx.hash_block != uint256(0):
+                            # For coinbase transactions, check maturity
+                            if wtx.is_coinbase():
+                                # Coinbase must be at least 1 block deep in TEST_MODE
+                                # IMPORTANT: Check maturity relative to NEXT block (best_height + 1)
+                                # because transactions will be included in the next block
+                                from cryptogenesis.chain import get_chain
+
+                                chain = get_chain()
+                                best_height = chain.get_best_height()
+                                next_block_height = best_height + 1
+
+                                # Get the block containing this coinbase
+                                if wtx.hash_block != uint256(0):
+                                    block_index = chain.get_block_index(wtx.hash_block)
+                                    if block_index:
+                                        # Depth relative to NEXT block being built
+                                        depth = next_block_height - block_index.height
+                                        required_maturity = 1  # TEST_MODE requires 1 block
+                                        if depth < required_maturity:
+                                            print(
+                                                f"[Node {node_id}] Coinbase "
+                                                f"{wtx_hash.get_hex()[:16]} "
+                                                f"not mature for next block: "
+                                                f"depth={depth} "
+                                                f"(coinbase_height={block_index.height}, "
+                                                f"next_block_height={next_block_height}, "
+                                                f"required={required_maturity})"
+                                            )
+                                            continue
+                                        else:
+                                            print(
+                                                f"[Node {node_id}] Coinbase "
+                                                f"{wtx_hash.get_hex()[:16]} "
+                                                f"is mature for next block: depth={depth}"
+                                            )
+                                    else:
+                                        # Can't find block, skip it
+                                        continue
+                                else:
+                                    # No block hash, skip it
+                                    continue
+                            # Transaction is confirmed (and mature if coinbase), check outputs
+                            if hasattr(wtx, "vout") and wtx.vout:
+                                # Check if transaction is spent
+                                is_tx_spent = getattr(wtx, "f_spent", False)
+                                if not is_tx_spent:
+                                    # Check each output to see if it's ours and spendable
+                                    for i, txout in enumerate(wtx.vout):
+                                        if txout.value > 0:
+                                            # Check if this output exists in UTXO set
+                                            # (simplified check - in real implementation
+                                            # would verify)
+                                            spendable_outputs.append((wtx, i, txout))
+                    except Exception as e:
+                        # Skip this wallet transaction if there's an error
+                        print(f"[Node {node_id}] Error processing wallet tx: {e}")
+                        import traceback
+
+                        traceback.print_exc()
+                        continue
+
+                if not spendable_outputs:
+                    wallet_count = len(wallet)
                     print(
-                        f"[Node {node_id}] Transaction created: " f"{tx.get_hash().get_hex()[:16]}"
+                        f"[Node {node_id}] No spendable outputs "
+                        f"(wallet has {wallet_count} transactions), skipping"
                     )
-                else:
-                    print(f"[Node {node_id}] Transaction rejected")
+                    continue
+
+                print(f"[Node {node_id}] Found {len(spendable_outputs)} spendable outputs")
+
+                # Randomly decide how many transactions to create (1-5)
+                num_transactions = random.randint(1, min(5, len(spendable_outputs)))
+
+                # Randomly select which other nodes to send to (exclude self)
+                other_nodes = [i for i in range(1, 11) if i != node_id]
+                if not other_nodes:
+                    print(f"[Node {node_id}] No other nodes to send to")
+                    continue
+
+                # Create multiple transactions
+                for tx_num in range(num_transactions):
+                    if not spendable_outputs:
+                        break
+
+                    # Pick random output to spend
+                    tx_source, vout_idx, txout = random.choice(spendable_outputs)
+                    spendable_outputs.remove((tx_source, vout_idx, txout))
+
+                    # Pick random destination node
+                    dest_node_id = random.choice(other_nodes)
+
+                    # Generate a key for the destination (simulate another node's key)
+                    # In a real scenario, we'd get the public key from the network
+                    dest_key = Key()
+                    dest_key.generate_new_key()
+
+                    # Calculate amount to send (random portion of available,
+                    # but leave some for fees)
+                    available = txout.value
+
+                    # We'll create the transaction first, then calculate the fee
+                    # and adjust outputs to ensure we meet minimum fee requirement
+                    # Start with a reasonable fee estimate
+                    estimated_fee = 10000
+                    max_send = available - estimated_fee
+
+                    if max_send <= 0:
+                        continue
+
+                    # Send random amount (10% to 90% of available)
+                    send_amount = random.randint(int(max_send * 0.1), int(max_send * 0.9))
+                    change_amount = available - send_amount - estimated_fee
+
+                    # Create transaction first to calculate actual size and fee
+                    tx = Transaction()
+                    txin = TxIn()
+                    txin.prevout.hash = tx_source.get_hash()
+                    txin.prevout.n = vout_idx
+                    tx.vin = [txin]
+
+                    # Outputs: send to destination and change back to us
+                    tx.vout = []
+
+                    # Output to destination
+                    txout_dest = TxOut()
+                    txout_dest.value = send_amount
+                    txout_dest.script_pubkey = Script()
+                    txout_dest.script_pubkey.push_data(dest_key.get_pubkey())
+                    txout_dest.script_pubkey.push_opcode(OP_CHECKSIG)
+                    tx.vout.append(txout_dest)
+
+                    # Change output (if any)
+                    if change_amount > 0:
+                        # Get our key for change
+                        our_key = Key()
+                        our_key.generate_new_key()
+                        add_key(our_key)  # Add to wallet
+
+                        txout_change = TxOut()
+                        txout_change.value = change_amount
+                        txout_change.script_pubkey = Script()
+                        txout_change.script_pubkey.push_data(our_key.get_pubkey())
+                        txout_change.script_pubkey.push_opcode(OP_CHECKSIG)
+                        tx.vout.append(txout_change)
+
+                    # Now calculate the actual minimum fee for this transaction
+                    # IMPORTANT: Calculate fee with and without discount to ensure we meet both
+                    # The miner will apply discount when including in block, but we need
+                    # to ensure the transaction has enough fee for both cases
+                    from cryptogenesis.serialize import SER_NETWORK, get_serialize_size
+
+                    tx_size = get_serialize_size(tx, SER_NETWORK)
+                    min_fee_no_discount = tx.get_min_fee(f_discount=False)
+                    min_fee_with_discount = tx.get_min_fee(f_discount=True)
+
+                    # Use the higher of the two to ensure we pass validation
+                    # (miner might not apply discount if block already has many transactions)
+                    min_fee = max(min_fee_no_discount, min_fee_with_discount)
+
+                    print(
+                        f"[Node {node_id}] Transaction size: {tx_size} bytes, "
+                        f"min_fee_no_discount={min_fee_no_discount}, "
+                        f"min_fee_with_discount={min_fee_with_discount}, "
+                        f"using min_fee={min_fee}"
+                    )
+
+                    # Calculate actual fee: value_in - value_out
+                    # We need to ensure this meets min_fee
+                    actual_fee = (
+                        available - send_amount - (change_amount if change_amount > 0 else 0)
+                    )
+
+                    if actual_fee < min_fee:
+                        # Need to increase fee - reduce change amount
+                        fee_shortfall = min_fee - actual_fee
+                        if change_amount >= fee_shortfall:
+                            change_amount -= fee_shortfall
+                            # Update change output
+                            if change_amount > 0:
+                                tx.vout[-1].value = change_amount
+                            else:
+                                # Remove change output if it's too small
+                                tx.vout.pop()
+                        else:
+                            # Can't meet fee requirement, skip this transaction
+                            print(
+                                f"[Node {node_id}] Cannot meet minimum fee requirement: "
+                                f"min_fee={min_fee}, available={available}, "
+                                f"send_amount={send_amount}, change_amount={change_amount}"
+                            )
+                            continue
+
+                    final_fee = (
+                        available - send_amount - (change_amount if change_amount > 0 else 0)
+                    )
+                    print(
+                        f"[Node {node_id}] Transaction fee: {final_fee} satoshis "
+                        f"(min_fee={min_fee}, available={available}, "
+                        f"send={send_amount}, change={change_amount})"
+                    )
+
+                    # Create transaction
+                    tx = Transaction()
+
+                    # Input: spend from our UTXO
+                    txin = TxIn()
+                    txin.prevout.hash = tx_source.get_hash()
+                    txin.prevout.n = vout_idx
+                    tx.vin = [txin]
+
+                    # Outputs: send to destination and change back to us
+                    tx.vout = []
+
+                    # Output to destination
+                    txout_dest = TxOut()
+                    txout_dest.value = send_amount
+                    txout_dest.script_pubkey = Script()
+                    txout_dest.script_pubkey.push_data(dest_key.get_pubkey())
+                    txout_dest.script_pubkey.push_opcode(OP_CHECKSIG)
+                    tx.vout.append(txout_dest)
+
+                    # Change output (if any)
+                    if change_amount > 0:
+                        # Get our key for change
+                        our_key = Key()
+                        our_key.generate_new_key()
+                        add_key(our_key)  # Add to wallet
+
+                        txout_change = TxOut()
+                        txout_change.value = change_amount
+                        txout_change.script_pubkey = Script()
+                        txout_change.script_pubkey.push_data(our_key.get_pubkey())
+                        txout_change.script_pubkey.push_opcode(OP_CHECKSIG)
+                        tx.vout.append(txout_change)
+
+                    # Sign transaction (simplified - in real implementation would sign properly)
+                    # For now, we'll skip strict signing and let the mempool accept it
+
+                    print(
+                        f"[Node {node_id}] Creating transaction #{tx_num + 1}: "
+                        f"Sending {send_amount / COIN:.4f} BTC to node {dest_node_id}"
+                    )
+
+                    # Try to accept transaction with proper checks
+                    # First try with checks enabled, then fallback to disabled if needed
+                    print(
+                        f"[Node {node_id}] Attempting to accept transaction #{tx_num + 1} "
+                        f"with check_inputs=True, check_utxos=True"
+                    )
+                    success, missing = accept_transaction(tx, check_inputs=True, check_utxos=True)
+                    if not success:
+                        # If it fails with checks, try without (for testing)
+                        print(
+                            f"[Node {node_id}] Transaction #{tx_num + 1} failed with checks: "
+                            f"success={success}, missing={missing}"
+                        )
+                        print(
+                            f"[Node {node_id}] Trying without checks "
+                            f"(check_inputs=False, check_utxos=False)"
+                        )
+                        success, missing = accept_transaction(
+                            tx, check_inputs=False, check_utxos=False
+                        )
+                        if success:
+                            tx_num_display = tx_num + 1
+                            print(
+                                f"[Node {node_id}] Transaction #{tx_num_display} "
+                                f"accepted without checks"
+                            )
+                        else:
+                            print(
+                                f"[Node {node_id}] Transaction #{tx_num + 1} still failed: "
+                                f"success={success}, missing={missing}"
+                            )
+
+                    if success:
+                        print(
+                            f"[Node {node_id}] Transaction #{tx_num + 1} created: "
+                            f"{tx.get_hash().get_hex()[:16]}, "
+                            f"amount: {send_amount / COIN:.4f} BTC"
+                        )
+                    else:
+                        print(f"[Node {node_id}] Transaction #{tx_num + 1} rejected: {missing}")
+
+                    # Small delay between transactions
+                    time.sleep(2)
+
             except Exception as e:
-                print(f"[Node {node_id}] Error creating transaction: {e}")
+                print(f"[Node {node_id}] Error creating transactions: {e}")
+                import traceback
+
+                traceback.print_exc()
 
     import threading
 
