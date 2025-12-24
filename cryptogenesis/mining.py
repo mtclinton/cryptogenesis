@@ -121,14 +121,25 @@ def create_new_block(key: Key, extra_nonce: int, n_bits: int, prev_hash: uint256
     # Get all transactions
     all_txs = mempool.get_all_transactions()
 
+    print(f"create_new_block: Mempool has {len(all_txs)} transactions")
+    if len(all_txs) > 0:
+        tx_hashes = [tx.get_hash().get_hex()[:16] for tx in all_txs]
+        print(f"create_new_block: Transaction hashes: {tx_hashes}")
     f_found_something = True
+    transactions_added = 0
+    transactions_skipped = 0
     while f_found_something and n_block_size < MAX_SIZE // 2:
         f_found_something = False
         for tx in all_txs:
             tx_hash = tx.get_hash()
             if tx_hash in vf_already_added:
                 continue
-            if tx.is_coinbase() or not tx.is_final(chain.best_height + 1):
+            if tx.is_coinbase():
+                transactions_skipped += 1
+                continue
+            if not tx.is_final(chain.best_height + 1):
+                transactions_skipped += 1
+                print(f"create_new_block: Transaction {tx_hash.get_hex()[:16]} not final")
                 continue
 
             # Try to connect inputs with minimum fee check
@@ -138,6 +149,27 @@ def create_new_block(key: Key, extra_nonce: int, n_bits: int, prev_hash: uint256
             n_min_fee = tx.get_min_fee(f_discount=len(block.transactions) < 100)
             map_test_pool_tmp = map_test_pool.copy()
             try:
+                # Log transaction inputs for debugging
+                tx_hash_hex = tx_hash.get_hex()[:16]
+                print(
+                    f"create_new_block: Validating transaction {tx_hash_hex} "
+                    f"with {len(tx.vin)} inputs"
+                )
+                for i, txin in enumerate(tx.vin):
+                    prev_hash = txin.prevout.hash.get_hex()[:16]
+                    prev_n = txin.prevout.n
+                    print(f"create_new_block:   Input {i}: prevout={prev_hash}:{prev_n}")
+                    # Check if prevout exists in txdb or map_test_pool
+                    prev_txindex = txdb.read_tx_index(txin.prevout.hash)
+                    found_in_txdb = prev_txindex is not None
+                    found_in_pool = txin.prevout.hash in map_test_pool_tmp
+                    if found_in_txdb:
+                        print("create_new_block:     Found in txdb")
+                    elif found_in_pool:
+                        print("create_new_block:     Found in map_test_pool")
+                    else:
+                        print("create_new_block:     NOT FOUND in txdb or map_test_pool!")
+
                 success, fees = tx.connect_inputs(  # type: ignore[attr-defined]
                     txdb,
                     map_test_pool_tmp,
@@ -155,8 +187,64 @@ def create_new_block(key: Key, extra_nonce: int, n_bits: int, prev_hash: uint256
                     vf_already_added.add(tx_hash)
                     n_fees += fees
                     f_found_something = True
-            except Exception:
+                    transactions_added += 1
+                    print(
+                        f"create_new_block: Added transaction {tx_hash.get_hex()[:16]}, fees={fees}"
+                    )
+                else:
+                    transactions_skipped += 1
+                    tx_hash_hex = tx_hash.get_hex()[:16]
+                    print(
+                        f"create_new_block: Transaction {tx_hash_hex} "
+                        f"connect_inputs failed (success=False)"
+                    )
+                    # Try to get more details about why it failed
+                    print(
+                        f"create_new_block: Transaction has {len(tx.vin)} inputs, "
+                        f"{len(tx.vout)} outputs"
+                    )
+                    # Check each input to see if it's already spent
+                    for i, txin in enumerate(tx.vin):
+                        prev_hash = txin.prevout.hash.get_hex()[:16]
+                        prev_n = txin.prevout.n
+                        prev_txindex = txdb.read_tx_index(txin.prevout.hash)
+                        if prev_txindex:
+                            if prev_txindex.spent and prev_n < len(prev_txindex.spent):
+                                spent_pos = prev_txindex.spent[prev_n]
+                                if not spent_pos.is_null():
+                                    print(
+                                        f"create_new_block:   Input {i} prevout "
+                                        f"{prev_hash}:{prev_n} is already spent at {spent_pos}"
+                                    )
+                                else:
+                                    print(
+                                        f"create_new_block:   Input {i} prevout "
+                                        f"{prev_hash}:{prev_n} is NOT spent (can be used)"
+                                    )
+                            else:
+                                spent_len = len(prev_txindex.spent) if prev_txindex.spent else 0
+                                print(
+                                    f"create_new_block:   Input {i} prevout "
+                                    f"{prev_hash}:{prev_n} spent array issue: "
+                                    f"spent={prev_txindex.spent}, len={spent_len}, "
+                                    f"prev_n={prev_n}"
+                                )
+                        else:
+                            print(
+                                f"create_new_block:   Input {i} prevout "
+                                f"{prev_hash}:{prev_n} not found in txdb"
+                            )
+            except Exception as e:
+                transactions_skipped += 1
+                print(f"create_new_block: Transaction {tx_hash.get_hex()[:16]} exception: {e}")
+                import traceback
+
+                traceback.print_exc()
                 continue
+
+    print(
+        f"create_new_block: Added {transactions_added} transactions, skipped {transactions_skipped}"
+    )
 
     # Set block values
     block.bits = n_bits
@@ -229,25 +317,32 @@ def bitcoin_miner() -> bool:
         bn_extra_nonce += 1
         block = create_new_block(key, bn_extra_nonce, n_bits, pindex_prev.block_hash)
 
-        print(f"\n\nRunning BitcoinMiner with {len(block.transactions)} transactions in block\n")
+        mempool_tx_count = len(block.transactions) - 1  # Exclude coinbase
+        print(
+            f"\n\nRunning BitcoinMiner with {len(block.transactions)} transactions "
+            f"({mempool_tx_count} from mempool) in block\n"
+        )
+        if mempool_tx_count == 0:
+            mempool = get_mempool()
+            all_txs = mempool.get_all_transactions()
+            print(f"  Mempool has {len(all_txs)} transactions, but none were included")
+            if len(all_txs) > 0:
+                print("  This suggests transactions failed validation during block creation")
+
+        # IMPORTANT: Ensure merkle root is built before mining
+        # The merkle root must match the transactions in the block
+        block.merkle_root = block.build_merkle_tree()
 
         # Prebuild hash buffer (matches Bitcoin v0.1 structure)
         # Structure: block header (80 bytes) + padding + hash1 + padding
+        # IMPORTANT: Use same format as block.get_hash() - signed int for version
         block_header = bytearray(80)
-        struct.pack_into("<I", block_header, 0, block.version)
+        struct.pack_into("<i", block_header, 0, block.version)  # Use signed int to match get_hash()
         block_header[4:36] = block.prev_block_hash.to_bytes()
         block_header[36:68] = block.merkle_root.to_bytes()
         struct.pack_into("<I", block_header, 68, block.time)
         struct.pack_into("<I", block_header, 72, block.bits)
         struct.pack_into("<I", block_header, 76, block.nonce)
-
-        # Format for hashing
-        tmp_block = bytearray(80 + 64)  # header + padding
-        tmp_block[:80] = block_header
-        tmp_hash1 = bytearray(32 + 64)  # hash + padding
-
-        n_blocks0 = format_hash_blocks(tmp_block, 80)
-        n_blocks1 = format_hash_blocks(tmp_hash1, 32)
 
         # Search for proof-of-work
         n_start = get_time()
@@ -257,48 +352,88 @@ def bitcoin_miner() -> bool:
         # Debug: log mining start
         print(f"Mining: target={hash_target.pn[0]:08x}..., nonce starting at {block.nonce}")
 
-        while True:
-            # First SHA256
-            hash1_bytes = hashlib.sha256(bytes(tmp_block[: n_blocks0 * 64])).digest()
-            tmp_hash1[:32] = hash1_bytes
+        # IMPORTANT: Use the same hashing method as block.get_hash()
+        # block.get_hash() uses double_sha256() which does:
+        #   hash1 = sha256(header)
+        #   hash2 = sha256(hash1)
+        # We need to use the same method for consistency
+        from cryptogenesis.crypto import double_sha256
 
-            # Second SHA256
-            hash2_bytes = hashlib.sha256(bytes(tmp_hash1[: n_blocks1 * 64])).digest()
-            hash_result = hash_to_uint256(hash2_bytes)
+        while True:
+            # Rebuild header with current nonce (nonce is updated in the loop)
+            current_header = bytearray(80)
+            struct.pack_into("<i", current_header, 0, block.version)
+            current_header[4:36] = block.prev_block_hash.to_bytes()
+            current_header[36:68] = block.merkle_root.to_bytes()
+            struct.pack_into("<I", current_header, 68, block.time)
+            struct.pack_into("<I", current_header, 72, block.bits)
+            struct.pack_into("<I", current_header, 76, block.nonce)
+
+            # Use double_sha256 directly on the header (matching block.get_hash())
+            header_bytes = bytes(current_header)
+            hash_result = hash_to_uint256(double_sha256(header_bytes))
 
             if hash_result <= hash_target:
-                block.nonce = struct.unpack("<I", tmp_block[76:80])[0]
-
+                # Block fields are already set correctly (we rebuild header each iteration)
                 # Verify hash using block's get_hash() method
-                # If it matches, use it. If not, the mining hash is valid and we'll use that.
                 block_hash = block.get_hash()
+
                 if hash_result != block_hash:
-                    # Hash mismatch - mining format vs standard format
-                    # The mining hash passed the target check, so it's valid
+                    # Hash mismatch - this means block structure doesn't match mining structure
+                    # This can happen if:
+                    # 1. Transactions were modified after block creation
+                    # 2. Merkle root calculation differs from mining calculation
+                    # 3. Block header format differs
                     print(
-                        f"WARNING: Hash mismatch: "
+                        f"ERROR: Hash mismatch: "
                         f"mining={hash_result.get_hex()[:16]}, "
                         f"block.get_hash()={block_hash.get_hex()[:16]}"
                     )
-                    # Use mining hash (it passed the target check)
-                    # block.get_hash() will be checked in CheckBlock,
-                    # but we know mining hash is valid
-                    pass  # Keep using hash_result from mining
+                    print(f"  Block time: {block.time}, nonce: {block.nonce}")
+                    print(f"  Merkle root: {block.merkle_root.get_hex()[:16]}")
+                    print(f"  Transactions: {len(block.transactions)}")
 
-                print("BitcoinMiner:")
-                print("proof-of-work found")
-                print(f"  hash: {hash_result.get_hex()}")
+                    # Rebuild block header to match what we mined
+                    # The mined hash is correct, so we need to ensure block matches
+                    # Recalculate everything from scratch
+                    block.merkle_root = block.build_merkle_tree()
+                    block_hash = block.get_hash()
+
+                    if hash_result != block_hash:
+                        print(
+                            f"ERROR: Hash still mismatched after rebuild: "
+                            f"mining={hash_result.get_hex()[:16]}, "
+                            f"block.get_hash()={block_hash.get_hex()[:16]}"
+                        )
+                        print("  Skipping this block - hash mismatch indicates structural issue")
+                        # Skip this block and create a new one
+                        time.sleep(0.5)
+                        break
+                    else:
+                        print("✓ Hash matches after rebuild")
+
+                print("BitcoinMiner: proof-of-work found")
+                try:
+                    hash_hex = hash_result.get_hex()
+                    print(f"  hash: {hash_hex}")
+                except Exception as e:
+                    print(f"  hash: (error getting hex: {e})")
+                    import traceback
+
+                    traceback.print_exc()
                 # Target might be too large for get_hex(), so format manually
                 try:
                     target_hex = hash_target.get_hex()
+                    print(f"target: {target_hex}")
                 except (struct.error, OverflowError):
                     # Target is too large, format from pn array directly
                     # Show first few uint32 values as hex
                     target_hex = (
                         f"{hash_target.pn[0]:08x}{hash_target.pn[1]:08x}... (target too large)"
                     )
-                print(f"target: {target_hex}")
+                    print(f"target: {target_hex}")
                 print(f"Block: {block}")
+                print("BitcoinMiner: About to save key and process block...")
 
                 # Save key and process block
                 if not add_key(key):
@@ -306,24 +441,47 @@ def bitcoin_miner() -> bool:
                 key.generate_new_key()
 
                 # Process this block
-                if not chain.process_block(block):
-                    print("ERROR in BitcoinMiner, ProcessBlock, block not accepted")
+                block_hash_str = block.get_hash().get_hex()[:16]
+                print(f"Processing block with hash: {block_hash_str}...")
+                print(
+                    f"  Block details: version={block.version}, "
+                    f"time={block.time}, nonce={block.nonce}"
+                )
+                print(f"  Block prev_hash: {block.prev_block_hash.get_hex()[:16]}")
+                print(f"  Block merkle_root: {block.merkle_root.get_hex()[:16]}")
 
-                time.sleep(0.5)
+                process_result = chain.process_block(block)
+                if not process_result:
+                    print(
+                        f"ERROR in BitcoinMiner: ProcessBlock returned False "
+                        f"for block {block_hash_str}"
+                    )
+                    print("  This means the block was not accepted into the chain")
+                    # Get more details about why it failed
+                    import sys
+                    import traceback
+
+                    print("Full traceback:", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+                    print("Full traceback:", file=sys.stdout)
+                    traceback.print_exc(file=sys.stdout)
+                else:
+                    print(f"✓ Block accepted! Height: {chain.best_height}")
+
+                # Break out of inner mining loop to create a new block
+                # The outer loop will continue and create a new block
                 break
 
             # Increment nonce
-            nonce = struct.unpack("<I", tmp_block[76:80])[0]
-            nonce += 1
-            struct.pack_into("<I", tmp_block, 76, nonce)
+            block.nonce += 1
 
             # Debug: log progress every 1M nonces
-            if nonce % 1000000 == 0:
-                print(f"Mining: tried {nonce:,} nonces, still searching...")
+            if block.nonce % 1000000 == 0:
+                print(f"Mining: tried {block.nonce:,} nonces, still searching...")
 
             # Update time every 0x3ffff iterations
-            if (nonce & 0x3FFFF) == 0:
-                if nonce == 0:
+            if (block.nonce & 0x3FFFF) == 0:
+                if block.nonce == 0:
                     break
                 if pindex_prev != chain.best_index:
                     break
@@ -341,7 +499,6 @@ def bitcoin_miner() -> bool:
                 # Clamp to reasonable range
                 max_future_time = current_time + 7200  # Max 2 hours in future
                 block.time = max(current_time, min(new_time, max_future_time, 0xFFFFFFFF))
-                struct.pack_into("<I", tmp_block, 68, block.time)
 
     return True
 

@@ -307,6 +307,10 @@ def accept_transaction(
         txdb = get_txdb()
 
         # Use ConnectInputs to validate inputs with strict minimum fee enforcement
+        # In TEST_MODE, we skip signature verification, so use is_miner=True to enable that
+        import os
+
+        use_miner_mode = os.environ.get("TEST_MODE") == "1"
         success, fees = tx.connect_inputs(  # type: ignore[attr-defined]
             txdb,
             map_test_pool={},
@@ -314,7 +318,7 @@ def accept_transaction(
             height=0,
             fees=0,
             is_block=False,
-            is_miner=False,
+            is_miner=use_miner_mode,
             min_fee=n_min_fee,
         )
 

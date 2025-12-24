@@ -283,21 +283,35 @@ class Block:
 
     def get_merkle_branch(self, index: int) -> List[uint256]:
         """Get merkle branch for transaction at index"""
+        print(f"get_merkle_branch: Starting for index {index}...")
         if len(self.merkle_tree) == 0:
+            print("get_merkle_branch: merkle_tree is empty, building...")
             self.build_merkle_tree()
+            print(f"get_merkle_branch: Built merkle_tree with {len(self.merkle_tree)} hashes")
 
+        print("get_merkle_branch: Building merkle branch...")
         merkle_branch = []
         j = 0
         size = len(self.transactions)
         idx = index
+        print(f"get_merkle_branch: Starting with size={size}, index={idx}, j={j}")
 
+        iteration = 0
         while size > 1:
+            iteration += 1
+            print(f"get_merkle_branch: Iteration {iteration}, size={size}, idx={idx}, j={j}")
             i = min(idx ^ 1, size - 1)
+            print(f"get_merkle_branch: Calculated i={i}, accessing merkle_tree[{j + i}]")
             merkle_branch.append(self.merkle_tree[j + i])
             idx >>= 1
             j += size
             size = (size + 1) // 2
+            print(
+                f"get_merkle_branch: After iteration {iteration}, "
+                f"new size={size}, new idx={idx}, new j={j}"
+            )
 
+        print(f"get_merkle_branch: SUCCESS - returning branch with {len(merkle_branch)} hashes")
         return merkle_branch
 
     @staticmethod
