@@ -81,12 +81,16 @@ def parse_peers(peers_str: str) -> List[tuple]:
 
 def create_test_transaction(node_id: int) -> Transaction:
     """Create a test transaction"""
-    # Generate a key for this node
-    # generate_new_key() returns bytes (public key), not Key object
+    # Generate a deterministic key for this node based on node_id
+    # This ensures each node has a unique, identifiable wallet
+    import hashlib
+
     from cryptogenesis.crypto import Key
 
+    # Create deterministic private key from node_id (32 bytes for ECDSA)
+    seed = hashlib.sha256(f"node_{node_id}_wallet_seed".encode()).digest()
     key = Key()
-    key.generate_new_key()
+    key.set_privkey(seed[:32])  # Use first 32 bytes as private key
     add_key(key)
 
     # Create a simple transaction
@@ -168,7 +172,7 @@ def main():
 
     # Start mining
     print("\nStarting mining...")
-    start_mining()
+    start_mining(node_id)  # Pass node_id to miner
     print("Mining started")
 
     # Create periodic transactions - send coins randomly to other nodes
@@ -304,10 +308,15 @@ def main():
                     # Pick random destination node
                     dest_node_id = random.choice(other_nodes)
 
-                    # Generate a key for the destination (simulate another node's key)
-                    # In a real scenario, we'd get the public key from the network
-                    dest_key = Key()
-                    dest_key.generate_new_key()
+                    # Use deterministic key for destination node
+                    # (so transactions go to actual node wallets)
+                    import hashlib
+
+                    from cryptogenesis.crypto import Key as DestKey
+
+                    seed = hashlib.sha256(f"node_{dest_node_id}_wallet_seed".encode()).digest()
+                    dest_key = DestKey()
+                    dest_key.set_privkey(seed[:32])  # Use deterministic key
 
                     # Calculate amount to send (random portion of available,
                     # but leave some for fees)
@@ -346,10 +355,13 @@ def main():
 
                     # Change output (if any)
                     if change_amount > 0:
-                        # Get our key for change
+                        # Use our deterministic wallet key for change
+                        import hashlib
+
+                        seed = hashlib.sha256(f"node_{node_id}_wallet_seed".encode()).digest()
                         our_key = Key()
-                        our_key.generate_new_key()
-                        add_key(our_key)  # Add to wallet
+                        our_key.set_privkey(seed[:32])  # Use deterministic key
+                        add_key(our_key)  # Ensure it's in the wallet
 
                         txout_change = TxOut()
                         txout_change.value = change_amount
@@ -436,10 +448,13 @@ def main():
 
                     # Change output (if any)
                     if change_amount > 0:
-                        # Get our key for change
+                        # Use our deterministic wallet key for change
+                        import hashlib
+
+                        seed = hashlib.sha256(f"node_{node_id}_wallet_seed".encode()).digest()
                         our_key = Key()
-                        our_key.generate_new_key()
-                        add_key(our_key)  # Add to wallet
+                        our_key.set_privkey(seed[:32])  # Use deterministic key
+                        add_key(our_key)  # Ensure it's in the wallet
 
                         txout_change = TxOut()
                         txout_change.value = change_amount
@@ -527,12 +542,94 @@ def main():
         import json
         from http.server import BaseHTTPRequestHandler, HTTPServer
 
+        # Capture node_id in closure
+        api_node_id = node_id
+
         class BlockchainAPIHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path == "/api/blockchain":
                     try:
                         chain = get_chain()
                         best_index = chain.get_best_index()
+
+                        # Helper function to extract wallet address from script
+                        def extract_wallet_from_script(script):
+                            """Extract wallet address (pubkey hash) from script"""
+                            import struct
+
+                            from cryptogenesis.crypto import hash160
+                            from cryptogenesis.transaction import OP_PUSHDATA1, OP_PUSHDATA2
+
+                            if not script or not script.data:
+                                return None
+
+                            # Script format: [length] [pubkey bytes] [OP_CHECKSIG]
+                            # Look for 65-byte pubkey (uncompressed) in script
+                            # Parse script bytearray to find pubkey
+                            data = script.data
+                            i = 0
+                            while i < len(data):
+                                opcode = data[i]
+
+                                # Check if this is a push data opcode
+                                if opcode < OP_PUSHDATA1:
+                                    # Direct push: opcode is the length
+                                    length = opcode
+                                    if length == 65 and i + 1 + length <= len(data):
+                                        # Found 65-byte data - likely pubkey
+                                        pubkey = bytes(data[i + 1 : i + 1 + length])
+                                        if len(pubkey) == 65:
+                                            return hash160(pubkey).hex()
+                                    i += 1 + length
+                                elif opcode == OP_PUSHDATA1:
+                                    # OP_PUSHDATA1: next byte is length
+                                    if i + 1 < len(data):
+                                        length = data[i + 1]
+                                        if length == 65 and i + 2 + length <= len(data):
+                                            pubkey = bytes(data[i + 2 : i + 2 + length])
+                                            if len(pubkey) == 65:
+                                                return hash160(pubkey).hex()
+                                        i += 2 + length
+                                    else:
+                                        break
+                                elif opcode == OP_PUSHDATA2:
+                                    # OP_PUSHDATA2: next 2 bytes (little-endian) are length
+                                    if i + 2 < len(data):
+                                        length = struct.unpack("<H", bytes(data[i + 1 : i + 3]))[0]
+                                        if length == 65 and i + 3 + length <= len(data):
+                                            pubkey = bytes(data[i + 3 : i + 3 + length])
+                                            if len(pubkey) == 65:
+                                                return hash160(pubkey).hex()
+                                        i += 3 + length
+                                    else:
+                                        break
+                                else:
+                                    # Other opcode, skip
+                                    i += 1
+
+                            return None
+
+                        # Helper function to identify node from wallet address
+                        def identify_node_from_address(wallet_addr):
+                            """Identify which node owns this wallet address"""
+                            import hashlib
+
+                            from cryptogenesis.crypto import Key, hash160
+
+                            for node_i in range(1, 11):
+                                try:
+                                    seed = hashlib.sha256(
+                                        f"node_{node_i}_wallet_seed".encode()
+                                    ).digest()
+                                    test_key = Key()
+                                    test_key.set_privkey(seed[:32])
+                                    test_pubkey = test_key.get_pubkey()
+                                    test_addr = hash160(test_pubkey).hex()
+                                    if test_addr == wallet_addr:
+                                        return f"node{node_i}"
+                                except Exception:
+                                    continue
+                            return None
 
                         blocks = []
                         current = best_index
@@ -542,6 +639,55 @@ def main():
                                 block = chain.get_block(current.block_hash)
                                 if not block:
                                     break
+
+                                # Include transaction details with wallet addresses
+                                tx_details = []
+                                if hasattr(block, "transactions") and block.transactions:
+                                    for tx_idx, tx in enumerate(block.transactions):
+                                        tx_info = {
+                                            "index": tx_idx,
+                                            "hash": tx.get_hash().get_hex()[:16],
+                                            "is_coinbase": tx.is_coinbase(),
+                                        }
+
+                                        # For coinbase: show destination wallet
+                                        if tx.is_coinbase() and tx.vout:
+                                            for vout in tx.vout:
+                                                wallet_addr = extract_wallet_from_script(
+                                                    vout.script_pubkey
+                                                )
+                                                if wallet_addr:
+                                                    # Identify node BEFORE truncating address
+                                                    node_id = identify_node_from_address(
+                                                        wallet_addr
+                                                    )
+                                                    # Store full address for matching,
+                                                    # but show truncated
+                                                    tx_info["to_wallet"] = wallet_addr[:16] + "..."
+                                                    tx_info["to_wallet_full"] = wallet_addr
+                                                    if node_id:
+                                                        tx_info["to_node"] = node_id
+                                                    break
+                                        else:
+                                            # For regular transactions: show from and to wallets
+                                            to_wallets = []
+                                            for vout in tx.vout:
+                                                wallet_addr = extract_wallet_from_script(
+                                                    vout.script_pubkey
+                                                )
+                                                if wallet_addr:
+                                                    node_id = identify_node_from_address(
+                                                        wallet_addr
+                                                    )
+                                                    wallet_display = wallet_addr[:16] + "..."
+                                                    if node_id:
+                                                        wallet_display += f" ({node_id})"
+                                                    to_wallets.append(wallet_display)
+
+                                            if to_wallets:
+                                                tx_info["to_wallets"] = to_wallets
+
+                                        tx_details.append(tx_info)
 
                                 blocks.append(
                                     {
@@ -558,11 +704,15 @@ def main():
                                             if hasattr(block, "transactions")
                                             else 0
                                         ),
+                                        "transaction_details": tx_details,
                                     }
                                 )
                                 current = current.prev
                                 height += 1
                             except Exception:
+                                import traceback
+
+                                traceback.print_exc()
                                 break
 
                         data = {
@@ -572,6 +722,42 @@ def main():
                                 else (best_index.height if best_index else 0)
                             ),
                             "blocks": blocks,
+                            "timestamp": time.time(),
+                        }
+
+                        self.send_response(200)
+                        self.send_header("Content-type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps(data).encode())
+                    except Exception as e:
+                        self.send_error(500, str(e))
+                elif self.path == "/api/wallet":
+                    try:
+                        from cryptogenesis.crypto import hash160
+                        from cryptogenesis.wallet import get_balance, get_wallet
+
+                        balance = get_balance()
+                        wallet = get_wallet()
+                        transaction_count = len(wallet) if wallet else 0
+
+                        # Get wallet address (public key hash) for this node
+                        # Use the deterministic key we generated
+                        import hashlib
+
+                        from cryptogenesis.crypto import Key
+
+                        seed = hashlib.sha256(f"node_{api_node_id}_wallet_seed".encode()).digest()
+                        node_key = Key()
+                        node_key.set_privkey(seed[:32])
+                        pubkey = node_key.get_pubkey()
+                        wallet_address = hash160(pubkey).hex()
+
+                        data = {
+                            "node_id": f"node{api_node_id}",
+                            "wallet_address": wallet_address,
+                            "balance": balance,
+                            "transaction_count": transaction_count,
                             "timestamp": time.time(),
                         }
 

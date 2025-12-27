@@ -26,6 +26,8 @@ class VisualizationHandler(BaseHTTPRequestHandler):
             self.serve_blockchain_data()
         elif self.path == "/api/nodes":
             self.serve_nodes_data()
+        elif self.path == "/api/wallets":
+            self.serve_wallets_data()
         elif self.path.startswith("/api/block/"):
             block_hash = self.path.split("/")[-1]
             self.serve_block_data(block_hash)
@@ -80,6 +82,82 @@ class VisualizationHandler(BaseHTTPRequestHandler):
             chain = get_chain()
             best_index = chain.get_best_index()
 
+            # Helper function to extract wallet address from script
+            def extract_wallet_from_script(script):
+                """Extract wallet address (pubkey hash) from script"""
+                import struct
+
+                from cryptogenesis.crypto import hash160
+                from cryptogenesis.transaction import OP_PUSHDATA1, OP_PUSHDATA2
+
+                if not script or not script.data:
+                    return None
+
+                # Script format: [length] [pubkey bytes] [OP_CHECKSIG]
+                # Parse script bytearray to find pubkey
+                data = script.data
+                i = 0
+                while i < len(data):
+                    opcode = data[i]
+
+                    # Check if this is a push data opcode
+                    if opcode < OP_PUSHDATA1:
+                        # Direct push: opcode is the length
+                        length = opcode
+                        if length == 65 and i + 1 + length <= len(data):
+                            # Found 65-byte data - likely pubkey
+                            pubkey = bytes(data[i + 1 : i + 1 + length])
+                            if len(pubkey) == 65:
+                                return hash160(pubkey).hex()
+                        i += 1 + length
+                    elif opcode == OP_PUSHDATA1:
+                        # OP_PUSHDATA1: next byte is length
+                        if i + 1 < len(data):
+                            length = data[i + 1]
+                            if length == 65 and i + 2 + length <= len(data):
+                                pubkey = bytes(data[i + 2 : i + 2 + length])
+                                if len(pubkey) == 65:
+                                    return hash160(pubkey).hex()
+                            i += 2 + length
+                        else:
+                            break
+                    elif opcode == OP_PUSHDATA2:
+                        # OP_PUSHDATA2: next 2 bytes (little-endian) are length
+                        if i + 2 < len(data):
+                            length = struct.unpack("<H", bytes(data[i + 1 : i + 3]))[0]
+                            if length == 65 and i + 3 + length <= len(data):
+                                pubkey = bytes(data[i + 3 : i + 3 + length])
+                                if len(pubkey) == 65:
+                                    return hash160(pubkey).hex()
+                            i += 3 + length
+                        else:
+                            break
+                    else:
+                        # Other opcode, skip
+                        i += 1
+
+                return None
+
+            # Helper function to identify node from wallet address
+            def identify_node_from_address(wallet_addr):
+                """Identify which node owns this wallet address"""
+                import hashlib
+
+                from cryptogenesis.crypto import Key, hash160
+
+                for node_i in range(1, 11):
+                    try:
+                        seed = hashlib.sha256(f"node_{node_i}_wallet_seed".encode()).digest()
+                        test_key = Key()
+                        test_key.set_privkey(seed[:32])
+                        test_pubkey = test_key.get_pubkey()
+                        test_addr = hash160(test_pubkey).hex()
+                        if test_addr == wallet_addr:
+                            return f"node{node_i}"
+                    except Exception:
+                        continue
+                return None
+
             # Get blockchain data
             blocks = []
             current = best_index
@@ -92,6 +170,46 @@ class VisualizationHandler(BaseHTTPRequestHandler):
                         print(f"API: Could not load block at height {height}")
                         break
 
+                    # Include transaction details with wallet addresses
+                    tx_details = []
+                    if hasattr(block, "transactions") and block.transactions:
+                        for tx_idx, tx in enumerate(block.transactions):
+                            tx_info = {
+                                "index": tx_idx,
+                                "hash": tx.get_hash().get_hex()[:16],
+                                "is_coinbase": tx.is_coinbase(),
+                            }
+
+                            # For coinbase: show destination wallet
+                            if tx.is_coinbase() and tx.vout:
+                                for vout in tx.vout:
+                                    wallet_addr = extract_wallet_from_script(vout.script_pubkey)
+                                    if wallet_addr:
+                                        # Identify node BEFORE truncating address
+                                        node_id = identify_node_from_address(wallet_addr)
+                                        # Store full address for matching, but show truncated
+                                        tx_info["to_wallet"] = wallet_addr[:16] + "..."
+                                        tx_info["to_wallet_full"] = wallet_addr
+                                        if node_id:
+                                            tx_info["to_node"] = node_id
+                                        break
+                            else:
+                                # For regular transactions: show to wallets
+                                to_wallets = []
+                                for vout in tx.vout:
+                                    wallet_addr = extract_wallet_from_script(vout.script_pubkey)
+                                    if wallet_addr:
+                                        node_id = identify_node_from_address(wallet_addr)
+                                        wallet_display = wallet_addr[:16] + "..."
+                                        if node_id:
+                                            wallet_display += f" ({node_id})"
+                                        to_wallets.append(wallet_display)
+
+                                if to_wallets:
+                                    tx_info["to_wallets"] = to_wallets
+
+                            tx_details.append(tx_info)
+
                     block_data = {
                         "hash": current.block_hash.get_hex(),
                         "height": current.height,
@@ -100,6 +218,7 @@ class VisualizationHandler(BaseHTTPRequestHandler):
                         "transactions": (
                             len(block.transactions) if hasattr(block, "transactions") else 0
                         ),
+                        "transaction_details": tx_details,
                     }
                     blocks.append(block_data)
                     current = current.prev
@@ -163,6 +282,78 @@ class VisualizationHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
         except Exception as e:
+            self.send_error(500, str(e))
+
+    def serve_wallets_data(self):
+        """Serve wallets data as JSON by querying each node's API"""
+        try:
+            import socket
+            import urllib.request
+
+            wallets = []
+            node_count = int(os.environ.get("NODE_COUNT", "10"))
+
+            # Query each node's wallet API
+            # Use container names (node1, node2, etc.) which work in Docker network
+            for i in range(1, node_count + 1):
+                node_id = f"node{i}"
+                # Use container name for Docker network access
+                wallet_url = f"http://{node_id}:8081/api/wallet"
+
+                try:
+                    # Try to fetch wallet data from node
+                    req = urllib.request.Request(wallet_url)
+                    req.add_header("User-Agent", "VisualizationServer/1.0")
+                    with urllib.request.urlopen(req, timeout=2) as response:
+                        if response.status == 200:
+                            wallet_data = json.loads(response.read().decode())
+                            wallets.append(wallet_data)
+                        else:
+                            # Node not responding, add placeholder
+                            wallets.append(
+                                {
+                                    "node_id": node_id,
+                                    "wallet_address": None,
+                                    "balance": 0,
+                                    "transaction_count": 0,
+                                }
+                            )
+                except (urllib.error.URLError, socket.timeout, socket.gaierror):
+                    # Node not available, add placeholder
+                    wallets.append(
+                        {
+                            "node_id": node_id,
+                            "wallet_address": None,
+                            "balance": 0,
+                            "transaction_count": 0,
+                        }
+                    )
+                except Exception as e:
+                    print(f"API: Error querying {node_id}: {e}")
+                    wallets.append(
+                        {
+                            "node_id": node_id,
+                            "wallet_address": None,
+                            "balance": 0,
+                            "transaction_count": 0,
+                        }
+                    )
+
+            data = {
+                "wallets": wallets,
+                "timestamp": time.time(),
+            }
+
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode())
+        except Exception as e:
+            print(f"API: Error in serve_wallets_data: {e}")
+            import traceback
+
+            traceback.print_exc()
             self.send_error(500, str(e))
 
     def serve_block_data(self, block_hash: str):
@@ -289,6 +480,28 @@ def get_visualization_html() -> str:
             color: #0ff;
             margin-top: 5px;
         }
+        .wallet-item {
+            background: rgba(40, 40, 40, 0.8);
+            border: 1px solid #555;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .wallet-item .wallet-node {
+            font-weight: bold;
+            color: #f0a000;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .wallet-item .wallet-balance {
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .wallet-item .wallet-tx-count {
+            font-size: 12px;
+            color: #0ff;
+            margin-top: 5px;
+        }
         #block-details {
             position: absolute;
             right: 0;
@@ -366,13 +579,14 @@ def get_visualization_html() -> str:
     <div id="sidebar">
         <h3>Blocks</h3>
         <div id="blockList"></div>
+        <h3 style="margin-top: 30px;">Wallets</h3>
+        <div id="walletSection"></div>
     </div>
 
     <div id="info">
         <h2>Bitcoin Network Visualization</h2>
         <div>Height: <span class="stat" id="height">0</span></div>
         <div>Blocks: <span class="stat" id="blockCount">0</span></div>
-        <div>Nodes: <span class="stat" id="nodeCount">0</span></div>
         <div>Last Update: <span class="stat" id="lastUpdate">-</span></div>
     </div>
 

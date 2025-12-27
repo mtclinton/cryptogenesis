@@ -9,7 +9,7 @@ import hashlib
 import struct
 import threading
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 from cryptogenesis.block import Block, get_next_work_required
 from cryptogenesis.chain import get_chain
@@ -268,17 +268,39 @@ def create_new_block(key: Key, extra_nonce: int, n_bits: int, prev_hash: uint256
     return block
 
 
-def bitcoin_miner() -> bool:
+def bitcoin_miner(node_id: Optional[int] = None) -> bool:
     """
     Main mining function (matches Bitcoin v0.1 BitcoinMiner)
+
+    Args:
+        node_id: Node ID to use for deterministic key generation.
+                 If None, reads from NODE_ID environment variable.
     """
     import os
 
     print("BitcoinMiner started")
+    import hashlib
+
     from cryptogenesis.wallet import add_key
 
+    # Use deterministic key based on node_id for consistent wallet address
+    if node_id is None:
+        # Try to get from environment variable, fallback to 1
+        node_id = int(os.environ.get("NODE_ID", "1"))
+
+    print(f"BitcoinMiner: Using node_id={node_id} for wallet key")
+    seed = hashlib.sha256(f"node_{node_id}_wallet_seed".encode()).digest()
     key = Key()
-    key.generate_new_key()
+    key.set_privkey(seed[:32])  # Use deterministic private key
+    add_key(key)  # Ensure it's in the wallet
+
+    # Verify the key was created correctly
+    pubkey = key.get_pubkey()
+    from cryptogenesis.crypto import hash160
+
+    wallet_addr = hash160(pubkey).hex()
+    print(f"BitcoinMiner: Wallet address = {wallet_addr[:32]}...")
+
     bn_extra_nonce = 0
 
     # Check if we should enforce minimum block interval (for testing)
@@ -503,10 +525,16 @@ def bitcoin_miner() -> bool:
     return True
 
 
-def start_mining():
-    """Start mining in a background thread"""
+def start_mining(node_id: Optional[int] = None):
+    """
+    Start mining in a background thread
+
+    Args:
+        node_id: Node ID to use for deterministic key generation.
+                 If None, miner will read from NODE_ID environment variable.
+    """
     set_generate_bitcoins(True)
-    thread = threading.Thread(target=bitcoin_miner, daemon=True)
+    thread = threading.Thread(target=bitcoin_miner, args=(node_id,), daemon=True)
     thread.start()
     return thread
 
