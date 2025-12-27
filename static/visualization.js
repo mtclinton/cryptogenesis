@@ -1,9 +1,8 @@
 // Three.js Blockchain Visualization
 import * as THREE from 'three';
 
-let scene, camera, renderer, blockchainGroup, nodesGroup;
+let scene, camera, renderer, blockchainGroup;
 let blocks = new Map();
-let nodes = new Map();
 let animationId;
 
 // Initialize Three.js scene
@@ -19,7 +18,8 @@ function init() {
         0.1,
         1000
     );
-    camera.position.set(0, 10, 20);
+    // Initial camera position - will follow blockchain as it grows
+    camera.position.set(0, 5, 15);
     camera.lookAt(0, 0, 0);
 
     // Renderer
@@ -37,9 +37,7 @@ function init() {
 
     // Groups
     blockchainGroup = new THREE.Group();
-    nodesGroup = new THREE.Group();
     scene.add(blockchainGroup);
-    scene.add(nodesGroup);
 
     // Grid helper
     const gridHelper = new THREE.GridHelper(50, 50, 0x444444, 0x222222);
@@ -98,9 +96,23 @@ function init() {
 // Create block visualization
 function createBlock(blockData, index) {
     const geometry = new THREE.BoxGeometry(1, 1, 1);
+
+    // First block (genesis block) is glowing yellow, others are light blue
+    let color, emissive;
+    if (index === 0) {
+        // Glowing yellow for first block (genesis)
+        color = 0xFFD700; // Gold/yellow
+        emissive = new THREE.Color().setHex(0xFFD700).multiplyScalar(0.8); // Strong glow
+    } else {
+        // Light blue color for other blocks (0x87CEEB = sky blue)
+        const lightBlue = 0x87CEEB;
+        color = lightBlue;
+        emissive = new THREE.Color().setHex(0x4A90E2).multiplyScalar(0.2);
+    }
+
     const material = new THREE.MeshPhongMaterial({
-        color: new THREE.Color().setHex(0x00ff00 + (index % 10) * 0x001100),
-        emissive: new THREE.Color().setHex(0x002200),
+        color: color,
+        emissive: emissive,
     });
 
     const block = new THREE.Mesh(geometry, material);
@@ -115,6 +127,13 @@ function createBlock(blockData, index) {
     );
     block.add(line);
 
+    // Add point light for glowing effect on first block
+    if (index === 0) {
+        const pointLight = new THREE.PointLight(0xFFD700, 1, 10);
+        pointLight.position.copy(block.position);
+        blockchainGroup.add(pointLight);
+    }
+
     return block;
 }
 
@@ -125,13 +144,15 @@ function createConnection(from, to) {
         new THREE.Vector3(to.position.x, to.position.y, to.position.z)
     ];
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = new THREE.LineBasicMaterial({ color: 0x00ffff, opacity: 0.5, transparent: true });
+    // Light blue connection lines to match blocks
+    const material = new THREE.LineBasicMaterial({ color: 0x87CEEB, opacity: 0.6, transparent: true });
     return new THREE.Line(geometry, material);
 }
 
 // Create node visualization
 function createNode(nodeData, index, total) {
     const geometry = new THREE.SphereGeometry(0.3, 16, 16);
+    // Nodes are green/red based on connection status
     const color = nodeData.connected ? 0x00ff00 : 0xff0000;
     const material = new THREE.MeshPhongMaterial({
         color: color,
@@ -197,6 +218,17 @@ function updateBlockchain(data) {
     if (blockMeshes.length > 0) {
         const centerX = (blockMeshes.length - 1) * 1.5 / 2;
         blockchainGroup.position.x = -centerX;
+
+        // Make camera follow the blockchain as it grows
+        // Position camera to view the latest block
+        const latestBlockX = (blockMeshes.length - 1) * 1.5 - centerX;
+        const targetX = latestBlockX;
+
+        // Smooth camera movement
+        const currentX = camera.position.x;
+        const newX = currentX + (targetX - currentX) * 0.1; // Smooth interpolation
+        camera.position.x = newX;
+        camera.lookAt(newX, 0, 0);
     }
 
     // Update info
@@ -299,19 +331,63 @@ function showBlockDetails(blockData) {
         txsHeader.textContent = 'Transactions:';
         detailsContent.appendChild(txsHeader);
 
-        // For now, show placeholder transactions
-        // In a real implementation, you'd fetch transaction details from the API
+        // Use transaction_details if available, otherwise show placeholders
+        const txDetails = blockData.transaction_details || [];
+
         for (let i = 0; i < blockData.transactions; i++) {
             const txItem = document.createElement('div');
             txItem.className = 'transaction-item';
 
             const txHash = document.createElement('div');
             txHash.className = 'tx-hash';
-            txHash.textContent = `Transaction ${i + 1}${i === 0 ? ' (Coinbase)' : ''}`;
+
+            const txDetail = txDetails[i];
+            if (txDetail) {
+                txHash.textContent = `Transaction ${i + 1}${txDetail.is_coinbase ? ' (Coinbase)' : ''}`;
+                txHash.textContent += ` - ${txDetail.hash}`;
+            } else {
+                txHash.textContent = `Transaction ${i + 1}${i === 0 ? ' (Coinbase)' : ''}`;
+            }
 
             const txInfo = document.createElement('div');
             txInfo.className = 'tx-info';
-            txInfo.textContent = i === 0 ? 'Coinbase transaction (block reward)' : 'Regular transaction';
+
+            if (txDetail) {
+                if (txDetail.is_coinbase) {
+                    // Coinbase transaction
+                    txInfo.innerHTML = 'Coinbase transaction (block reward)';
+                    if (txDetail.to_wallet) {
+                        const toWallet = document.createElement('div');
+                        toWallet.style.marginTop = '5px';
+                        toWallet.style.color = '#0ff';
+                        toWallet.textContent = `To: ${txDetail.to_wallet}`;
+                        if (txDetail.to_node) {
+                            toWallet.textContent += ` (${txDetail.to_node})`;
+                            toWallet.style.color = '#0f0';
+                        }
+                        txInfo.appendChild(toWallet);
+                    }
+                } else {
+                    // Regular transaction
+                    txInfo.innerHTML = 'Regular transaction';
+                    if (txDetail.to_wallets && txDetail.to_wallets.length > 0) {
+                        const toWallets = document.createElement('div');
+                        toWallets.style.marginTop = '5px';
+                        toWallets.style.color = '#0ff';
+                        toWallets.textContent = `To: ${txDetail.to_wallets.join(', ')}`;
+                        txInfo.appendChild(toWallets);
+                    }
+                    if (txDetail.from_wallets && txDetail.from_wallets.length > 0) {
+                        const fromWallets = document.createElement('div');
+                        fromWallets.style.marginTop = '5px';
+                        fromWallets.style.color = '#ff0';
+                        fromWallets.textContent = `From: ${txDetail.from_wallets.join(', ')}`;
+                        txInfo.appendChild(fromWallets);
+                    }
+                }
+            } else {
+                txInfo.textContent = i === 0 ? 'Coinbase transaction (block reward)' : 'Regular transaction';
+            }
 
             txItem.appendChild(txHash);
             txItem.appendChild(txInfo);
@@ -335,26 +411,62 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// Update nodes visualization
-function updateNodes(data) {
-    // Clear existing nodes
-    while (nodesGroup.children.length > 0) {
-        nodesGroup.remove(nodesGroup.children[0]);
-    }
+// Update wallets in sidebar
+function updateWallets(data) {
+    const walletSection = document.getElementById('walletSection');
+    if (!walletSection) return;
 
-    if (!data.nodes || data.nodes.length === 0) {
+    walletSection.innerHTML = '';
+
+    if (!data.wallets || data.wallets.length === 0) {
+        walletSection.innerHTML = '<div style="color: #888; padding: 10px;">No wallet data available</div>';
         return;
     }
 
-    // Create nodes
-    data.nodes.forEach((nodeData, index) => {
-        const nodeMesh = createNode(nodeData, index, data.nodes.length);
-        nodesGroup.add(nodeMesh);
-    });
+    // Sort wallets by balance (highest first)
+    const sortedWallets = [...data.wallets].sort((a, b) => (b.balance || 0) - (a.balance || 0));
 
-    // Update info
-    document.getElementById('nodeCount').textContent = data.count || 0;
-    console.log(`Updated nodes: count=${data.count}`);
+    sortedWallets.forEach((walletData) => {
+        const walletItem = document.createElement('div');
+        walletItem.className = 'wallet-item';
+
+        const nodeName = document.createElement('div');
+        nodeName.className = 'wallet-node';
+        nodeName.textContent = walletData.node_id || 'Unknown';
+
+        const walletAddr = document.createElement('div');
+        walletAddr.className = 'wallet-address';
+        walletAddr.style.fontSize = '10px';
+        walletAddr.style.color = '#888';
+        walletAddr.style.marginTop = '3px';
+        if (walletData.wallet_address) {
+            walletAddr.textContent = `Address: ${walletData.wallet_address.substring(0, 16)}...`;
+        } else {
+            walletAddr.textContent = 'Address: unknown';
+            walletAddr.style.color = '#f00';
+        }
+
+        const balance = document.createElement('div');
+        balance.className = 'wallet-balance';
+        const balanceBTC = (walletData.balance || 0) / 100000000; // Convert satoshis to BTC
+        balance.textContent = `Balance: ${balanceBTC.toFixed(8)} BTC`;
+        balance.style.color = balanceBTC > 0 ? '#0f0' : '#888';
+        balance.style.marginTop = '5px';
+
+        const txCount = document.createElement('div');
+        txCount.className = 'wallet-tx-count';
+        txCount.textContent = `${walletData.transaction_count || 0} transaction(s)`;
+        txCount.style.color = '#0ff';
+        txCount.style.fontSize = '12px';
+        txCount.style.marginTop = '5px';
+
+        walletItem.appendChild(nodeName);
+        walletItem.appendChild(walletAddr);
+        walletItem.appendChild(balance);
+        walletItem.appendChild(txCount);
+
+        walletSection.appendChild(walletItem);
+    });
 }
 
 // Fetch blockchain data
@@ -376,19 +488,19 @@ async function fetchBlockchain() {
     }
 }
 
-// Fetch nodes data
-async function fetchNodes() {
+// Fetch wallets data
+async function fetchWallets() {
     try {
-        console.log('Fetching nodes data...');
-        const response = await fetch('/api/nodes');
+        console.log('Fetching wallets data...');
+        const response = await fetch('/api/wallets');
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
-        console.log('Received nodes data:', data);
-        updateNodes(data);
+        console.log('Received wallets data:', data);
+        updateWallets(data);
     } catch (error) {
-        console.error('Error fetching nodes:', error);
+        console.error('Error fetching wallets:', error);
     }
 }
 
@@ -396,15 +508,7 @@ async function fetchNodes() {
 function animate() {
     animationId = requestAnimationFrame(animate);
 
-    // Rotate blockchain group slowly
-    if (blockchainGroup) {
-        blockchainGroup.rotation.y += 0.005;
-    }
-
-    // Rotate nodes group
-    if (nodesGroup) {
-        nodesGroup.rotation.y += 0.01;
-    }
+    // No rotation - camera will follow blockchain instead
 
     renderer.render(scene, camera);
 }
@@ -416,9 +520,9 @@ animate();
 // Fetch data every 2 seconds
 setInterval(() => {
     fetchBlockchain();
-    fetchNodes();
+    fetchWallets();
 }, 2000);
 
 // Initial fetch
 fetchBlockchain();
-fetchNodes();
+fetchWallets();

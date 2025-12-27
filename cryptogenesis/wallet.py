@@ -569,13 +569,15 @@ def is_mine(script_pubkey: Script) -> bool:
     """
     Check if script belongs to wallet (IsMine)
     Matches Bitcoin v0.1 Solver logic
+    Properly parses script bytearray to extract pubkeys and compare with wallet keys
     """
-    # Templates for standard transaction types
-    # Standard tx: pubkey OP_CHECKSIG
-    # P2PKH tx: OP_DUP OP_HASH160 pubkeyhash OP_EQUALVERIFY OP_CHECKSIG
+    import struct
 
-    # For now, simplified check - look for pubkey or pubkeyhash in script
-    # Full implementation would use Solver to match templates
+    from cryptogenesis.crypto import hash160
+    from cryptogenesis.transaction import OP_PUSHDATA1, OP_PUSHDATA2
+
+    if not script_pubkey or not script_pubkey.data:
+        return False
 
     print("is_mine: Starting, acquiring keys_lock...")
     with keys_lock:
@@ -585,17 +587,83 @@ def is_mine(script_pubkey: Script) -> bool:
             f"is_mine: Got keys_lock, checking {keys_count} keys and "
             f"{pubkeys_count} pubkey hashes..."
         )
-        # Check if script contains any of our public keys
-        for i, pubkey in enumerate(map_keys.keys()):
-            if pubkey in script_pubkey.data:
-                print(f"is_mine: Found matching pubkey at index {i}")
+
+        # Parse script bytearray to extract pubkeys and pubkey hashes
+        data = script_pubkey.data
+        i = 0
+        extracted_pubkeys = []
+        extracted_pubkey_hashes = []
+
+        while i < len(data):
+            opcode = data[i]
+
+            # Check if this is a push data opcode
+            if opcode < OP_PUSHDATA1:
+                # Direct push: opcode is the length
+                length = opcode
+                if i + 1 + length <= len(data):
+                    pushed_data = bytes(data[i + 1 : i + 1 + length])
+                    # Check if it's a 65-byte pubkey (uncompressed)
+                    if length == 65:
+                        extracted_pubkeys.append(pushed_data)
+                    # Check if it's a 20-byte pubkey hash
+                    elif length == 20:
+                        extracted_pubkey_hashes.append(pushed_data)
+                    i += 1 + length
+                else:
+                    break
+            elif opcode == OP_PUSHDATA1:
+                # OP_PUSHDATA1: next byte is length
+                if i + 1 < len(data):
+                    length = data[i + 1]
+                    if i + 2 + length <= len(data):
+                        pushed_data = bytes(data[i + 2 : i + 2 + length])
+                        if length == 65:
+                            extracted_pubkeys.append(pushed_data)
+                        elif length == 20:
+                            extracted_pubkey_hashes.append(pushed_data)
+                        i += 2 + length
+                    else:
+                        break
+                else:
+                    break
+            elif opcode == OP_PUSHDATA2:
+                # OP_PUSHDATA2: next 2 bytes (little-endian) are length
+                if i + 2 < len(data):
+                    length = struct.unpack("<H", bytes(data[i + 1 : i + 3]))[0]
+                    if i + 3 + length <= len(data):
+                        pushed_data = bytes(data[i + 3 : i + 3 + length])
+                        if length == 65:
+                            extracted_pubkeys.append(pushed_data)
+                        elif length == 20:
+                            extracted_pubkey_hashes.append(pushed_data)
+                        i += 3 + length
+                    else:
+                        break
+                else:
+                    break
+            else:
+                # Other opcode, skip
+                i += 1
+
+        # Check if any extracted pubkey matches our wallet keys
+        for extracted_pubkey in extracted_pubkeys:
+            if extracted_pubkey in map_keys:
+                print("is_mine: Found matching pubkey")
                 return True
 
-        # Check if script contains any of our pubkey hashes
-        for i, (pubkey_hash, pubkey) in enumerate(map_pub_keys.items()):
-            hash_bytes = pubkey_hash.to_bytes()
-            if hash_bytes in script_pubkey.data:
-                print(f"is_mine: Found matching pubkey hash at index {i}")
+            # Also check hash160 of extracted pubkey
+            extracted_hash = hash160(extracted_pubkey)
+            extracted_hash_uint160 = uint160(extracted_hash)
+            if extracted_hash_uint160 in map_pub_keys:
+                print("is_mine: Found matching pubkey hash")
+                return True
+
+        # Check if any extracted pubkey hash matches our wallet
+        for extracted_hash_bytes in extracted_pubkey_hashes:
+            extracted_hash_uint160 = uint160(extracted_hash_bytes)
+            if extracted_hash_uint160 in map_pub_keys:
+                print("is_mine: Found matching pubkey hash")
                 return True
 
     print("is_mine: No match found, returning False")
