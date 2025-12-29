@@ -1,0 +1,9 @@
+# Keep this directory in git but ignore any build artifacts
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+__pycache__/
+*.pyc
