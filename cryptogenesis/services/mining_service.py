@@ -7,6 +7,7 @@ Orchestrates mining operations with state management.
 import threading
 from typing import Optional
 
+from cryptogenesis.events import BlockMinedEvent, EventBus
 from cryptogenesis.services.blockchain_service import BlockchainService
 from cryptogenesis.services.service_result import ServiceResult
 from cryptogenesis.mining import bitcoin_miner, get_generate_bitcoins, set_generate_bitcoins
@@ -20,13 +21,13 @@ class MiningService:
     Runs mining in a separate thread.
     """
     
-    def __init__(self, blockchain_service: BlockchainService, event_bus: Optional[object] = None):
+    def __init__(self, blockchain_service: BlockchainService, event_bus: Optional[EventBus] = None):
         """
         Initialize mining service.
         
         Args:
             blockchain_service: BlockchainService instance for adding blocks
-            event_bus: EventBus instance for publishing events (optional, Phase 3)
+            event_bus: Optional EventBus instance for publishing events
         """
         self.blockchain_service = blockchain_service
         self.event_bus = event_bus
@@ -134,10 +135,15 @@ class MiningService:
             # instead of chain.process_block() directly. This requires:
             # 1. Extracting block creation and mining logic
             # 2. Calling blockchain_service.add_block() when block is found
-            # 3. Publishing BlockMinedEvent through event_bus (Phase 3)
+            # 3. Publishing BlockMinedEvent through event_bus after successful mining
+            #
+            # When refactored, the code should:
+            # - Call blockchain_service.add_block(block) when block is found
+            # - If successful, publish BlockMinedEvent(block) via event_bus
+            # - This ensures BlockMinedEvent is published after state update succeeds
             #
             # For now, we run bitcoin_miner() as-is, which still works correctly
-            # but doesn't use the service layer for block addition.
+            # but doesn't use the service layer for block addition or event publishing.
             
             bitcoin_miner(node_id=node_id)
         except Exception as e:
