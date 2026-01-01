@@ -7,6 +7,7 @@ Thread-safe state management for pending transactions.
 import threading
 from typing import Callable, Dict, List, Optional
 
+from cryptogenesis.events import Event, TransactionAddedEvent
 from cryptogenesis.transaction import Transaction
 from cryptogenesis.uint256 import uint256
 
@@ -38,8 +39,9 @@ class MempoolState:
             # Store transaction
             self._transactions[tx_hash] = tx
 
-            # Notify observers
-            self._notify_observers("transaction_added", tx_hash)
+            # Notify observers with Event object
+            event = TransactionAddedEvent(tx)
+            self.notify_observers(event)
 
             return True
 
@@ -131,8 +133,29 @@ class MempoolState:
             if observer in self._observers:
                 self._observers.remove(observer)
 
+    def notify_observers(self, event: Event):
+        """
+        Notify all observers of a state change with an Event object.
+        
+        Args:
+            event: Event object to pass to observers
+        """
+        # Create a copy of observers list to avoid issues if observers modify the list
+        observers_copy = list(self._observers)
+        for observer in observers_copy:
+            try:
+                observer(event)
+            except Exception:
+                # Don't let observer errors break state management
+                pass
+    
     def _notify_observers(self, event_type: str, *args):
-        """Notify all observers of a state change"""
+        """
+        Legacy method for backward compatibility.
+        
+        Notify all observers of a state change (old format).
+        New code should use notify_observers(event: Event) instead.
+        """
         # Create a copy of observers list to avoid issues if observers modify the list
         observers_copy = list(self._observers)
         for observer in observers_copy:
