@@ -8,6 +8,7 @@ import threading
 from typing import Callable, Dict, List, Optional, Tuple
 
 from cryptogenesis.block import Block
+from cryptogenesis.events import BlockAddedEvent, Event
 from cryptogenesis.transaction import TxOut
 from cryptogenesis.uint256 import uint256
 
@@ -54,8 +55,9 @@ class BlockchainState:
                 self._best_hash = block_hash
                 self._best_height = height
 
-                # Notify observers
-                self._notify_observers("block_added", block_hash, height)
+                # Notify observers with Event object
+                event = BlockAddedEvent(block)
+                self.notify_observers(event)
 
             return True
 
@@ -152,8 +154,29 @@ class BlockchainState:
             if observer in self._observers:
                 self._observers.remove(observer)
 
+    def notify_observers(self, event: Event):
+        """
+        Notify all observers of a state change with an Event object.
+        
+        Args:
+            event: Event object to pass to observers
+        """
+        # Create a copy of observers list to avoid issues if observers modify the list
+        observers_copy = list(self._observers)
+        for observer in observers_copy:
+            try:
+                observer(event)
+            except Exception:
+                # Don't let observer errors break state management
+                pass
+    
     def _notify_observers(self, event_type: str, *args):
-        """Notify all observers of a state change"""
+        """
+        Legacy method for backward compatibility.
+        
+        Notify all observers of a state change (old format).
+        New code should use notify_observers(event: Event) instead.
+        """
         # Create a copy of observers list to avoid issues if observers modify the list
         observers_copy = list(self._observers)
         for observer in observers_copy:
