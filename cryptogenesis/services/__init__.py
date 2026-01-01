@@ -7,6 +7,7 @@ Provides high-level operations for blockchain, wallet, mining, and network.
 
 from typing import Optional
 
+from cryptogenesis.events import EventBus
 from cryptogenesis.services.blockchain_service import BlockchainService, BlockValidator
 from cryptogenesis.services.mining_service import MiningService
 from cryptogenesis.services.network_service import NetworkService
@@ -47,7 +48,7 @@ class Services:
         self.network_service = network_service
 
 
-def get_services(event_bus: Optional[object] = None) -> Services:
+def get_services(event_bus: Optional[EventBus] = None) -> Services:
     """
     Create and initialize all services with proper dependencies.
     
@@ -72,13 +73,15 @@ def get_services(event_bus: Optional[object] = None) -> Services:
     block_validator = BlockValidator()
     blockchain_service = BlockchainService(
         blockchain_state=blockchain_state,
-        validator=block_validator
+        validator=block_validator,
+        event_bus=event_bus
     )
     
     # WalletService depends on BlockchainService
     wallet_service = WalletService(
         wallet_state=wallet_state,
-        blockchain_service=blockchain_service
+        blockchain_service=blockchain_service,
+        event_bus=event_bus
     )
     
     # MiningService depends on BlockchainService

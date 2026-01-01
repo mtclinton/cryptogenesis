@@ -7,6 +7,7 @@ Orchestrates wallet operations with state management.
 from typing import List, Optional
 
 from cryptogenesis.crypto import Key
+from cryptogenesis.events import EventBus, TransactionAddedEvent
 from cryptogenesis.services.blockchain_service import BlockchainService
 from cryptogenesis.services.service_result import ServiceResult
 from cryptogenesis.state.wallet_state import WalletState
@@ -20,16 +21,23 @@ class WalletService:
     Orchestrates wallet operations with state management.
     """
     
-    def __init__(self, wallet_state: WalletState, blockchain_service: BlockchainService):
+    def __init__(
+        self,
+        wallet_state: WalletState,
+        blockchain_service: BlockchainService,
+        event_bus: Optional[EventBus] = None,
+    ):
         """
         Initialize wallet service.
         
         Args:
             wallet_state: WalletState instance for state management
             blockchain_service: BlockchainService instance for blockchain operations
+            event_bus: Optional EventBus instance for publishing events
         """
         self.wallet_state = wallet_state
         self.blockchain_service = blockchain_service
+        self.event_bus = event_bus
     
     def add_key(self, key: Key) -> ServiceResult:
         """
@@ -120,6 +128,14 @@ class WalletService:
             # 3. Create transaction outputs
             # 4. Sign transaction inputs
             # 5. Add to mempool via mempool_service (to be added later)
+            # 6. Publish TransactionAddedEvent after successful addition to mempool
+            
+            # When transaction is successfully created and added to mempool:
+            # if self.event_bus:
+            #     try:
+            #         self.event_bus.publish(TransactionAddedEvent(tx))
+            #     except Exception as e:
+            #         print(f"Error publishing TransactionAddedEvent: {e}")
             
             return ServiceResult(
                 success=False,

@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 
 from cryptogenesis.block import Block
 from cryptogenesis.chain import BlockChain, get_chain
+from cryptogenesis.events import BlockAddedEvent, EventBus
 from cryptogenesis.services.service_result import ServiceResult
 from cryptogenesis.state.blockchain_state import BlockchainState
 from cryptogenesis.uint256 import uint256
@@ -69,16 +70,23 @@ class BlockchainService:
     Orchestrates blockchain operations with state management.
     """
     
-    def __init__(self, blockchain_state: BlockchainState, validator: Optional[BlockValidator] = None):
+    def __init__(
+        self,
+        blockchain_state: BlockchainState,
+        validator: Optional[BlockValidator] = None,
+        event_bus: Optional[EventBus] = None,
+    ):
         """
         Initialize blockchain service.
         
         Args:
             blockchain_state: BlockchainState instance for state management
             validator: BlockValidator instance (defaults to new validator with default chain)
+            event_bus: Optional EventBus instance for publishing events
         """
         self.blockchain_state = blockchain_state
         self.validator = validator if validator is not None else BlockValidator()
+        self.event_bus = event_bus
         # Get chain for height calculation
         self.chain = get_chain()
     
@@ -117,7 +125,13 @@ class BlockchainService:
                     error="Failed to add block to blockchain state (duplicate or error)"
                 )
             
-            # TODO: Publish BlockAddedEvent when event bus is added in Phase 3
+            # Publish BlockAddedEvent after successful state update
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(BlockAddedEvent(block))
+                except Exception as e:
+                    # Log error but don't fail the operation
+                    print(f"Error publishing BlockAddedEvent: {e}")
             
             return ServiceResult(
                 success=True,
