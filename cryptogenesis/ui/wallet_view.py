@@ -116,3 +116,4 @@ else:
             """Get the main panel widget"""
             return self.panel
 
+

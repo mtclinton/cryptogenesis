@@ -12,3 +12,4 @@ class NetworkService:
         """Initialize network service"""
         pass
 
+

@@ -21,6 +21,8 @@ except ImportError:
 from cryptogenesis.events import (
     BlockAddedEvent,
     EventBus,
+    NetworkPeerConnectedEvent,
+    NetworkPeerDisconnectedEvent,
     TransactionAddedEvent,
     WalletUpdatedEvent,
 )
@@ -115,6 +117,8 @@ else:
                 self.event_bus.subscribe(BlockAddedEvent, self._on_block_added)
                 self.event_bus.subscribe(TransactionAddedEvent, self._on_transaction_added)
                 self.event_bus.subscribe(WalletUpdatedEvent, self._on_wallet_updated)
+                self.event_bus.subscribe(NetworkPeerConnectedEvent, self._on_peer_connected)
+                self.event_bus.subscribe(NetworkPeerDisconnectedEvent, self._on_peer_disconnected)
         
         def _initial_refresh(self):
             """Initial refresh of views with data from services"""
@@ -146,7 +150,21 @@ else:
             """
             wx.CallAfter(self._refresh_wallet)
             wx.CallAfter(self._refresh_transactions)
-        
+
+        def _on_peer_connected(self, event: NetworkPeerConnectedEvent):
+            """
+            Handle NetworkPeerConnectedEvent from event_bus.
+            Uses wx.CallAfter to update GUI on main thread.
+            """
+            wx.CallAfter(self._update_status)
+
+        def _on_peer_disconnected(self, event: NetworkPeerDisconnectedEvent):
+            """
+            Handle NetworkPeerDisconnectedEvent from event_bus.
+            Uses wx.CallAfter to update GUI on main thread.
+            """
+            wx.CallAfter(self._update_status)
+
         def _on_initialize_system(self, event):
             """Handle Initialize System menu item"""
             # Run initialization in background thread
@@ -365,17 +383,27 @@ else:
             except Exception as e:
                 # Handle errors gracefully
                 print(f"Error refreshing transactions: {e}")
-        
+
         def _update_status(self):
             """Update status bar"""
             try:
                 height = self.services.blockchain_service.get_best_height()
                 is_mining = self.services.mining_service.is_mining()
                 mining_status = "Mining" if is_mining else "Not mining"
-                status_text = f"Height: {height} | {mining_status}"
+                peer_count = self._get_peer_count()
+                status_text = f"Height: {height} | {mining_status} | Peers: {peer_count}"
                 self.main_window.set_status_text(status_text)
             except Exception as e:
                 print(f"Error updating status: {e}")
+
+        def _get_peer_count(self) -> int:
+            """Get current peer count from network state"""
+            try:
+                if hasattr(self.services.network_service, 'network_manager') and self.services.network_service.network_manager:
+                    return self.services.network_service.network_manager.network_state.get_peer_count()
+                return 0
+            except Exception:
+                return 0
         
         def _format_money(self, amount: int) -> str:
             """

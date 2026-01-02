@@ -2,25 +2,41 @@
 Network State Manager
 
 Thread-safe state management for peer connections and network status.
+Uses Event system for state change notifications.
 """
 
 import threading
-from typing import Callable, List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
-from cryptogenesis.network import Address, Node
+# Import Address and Node from main network module file (not package to avoid circular import)
+import importlib.util
+import os
+import sys
+
+network_file_path = os.path.join(os.path.dirname(__file__), '..', 'network.py')
+network_file_path = os.path.abspath(network_file_path)
+spec = importlib.util.spec_from_file_location("network_module", network_file_path)
+network_module = importlib.util.module_from_spec(spec)
+sys.modules['network_module'] = network_module
+spec.loader.exec_module(network_module)
+Address = network_module.Address
+Node = network_module.Node
+
+if TYPE_CHECKING:
+    from cryptogenesis.events import EventBus, NetworkPeerConnectedEvent, NetworkPeerDisconnectedEvent
 
 
 class NetworkState:
     """Thread-safe network state manager"""
 
-    def __init__(self):
+    def __init__(self, event_bus: Optional["EventBus"] = None):
         self._lock = threading.RLock()
         # Store list of connected peers (Node objects)
         self._peers: List[Node] = []
         # Store list of known addresses
         self._addresses: List[Address] = []
-        # Observers for state change notifications
-        self._observers: List[Callable] = []
+        # EventBus for publishing state change events
+        self.event_bus = event_bus
 
     def add_peer(self, node: Node) -> bool:
         """
@@ -39,8 +55,13 @@ class NetworkState:
             # Add peer
             self._peers.append(node)
 
-            # Notify observers
-            self._notify_observers("peer_added", node.addr)
+            # Publish event
+            if self.event_bus:
+                try:
+                    from cryptogenesis.events import NetworkPeerConnectedEvent
+                    self.event_bus.publish(NetworkPeerConnectedEvent(node))
+                except Exception as e:
+                    print(f"Error publishing NetworkPeerConnectedEvent: {e}")
 
             return True
 
@@ -57,8 +78,13 @@ class NetworkState:
                 if existing_node.addr == node.addr:
                     removed_node = self._peers.pop(i)
 
-                    # Notify observers
-                    self._notify_observers("peer_removed", removed_node.addr)
+                    # Publish event
+                    if self.event_bus:
+                        try:
+                            from cryptogenesis.events import NetworkPeerDisconnectedEvent
+                            self.event_bus.publish(NetworkPeerDisconnectedEvent(removed_node))
+                        except Exception as e:
+                            print(f"Error publishing NetworkPeerDisconnectedEvent: {e}")
 
                     return True
 
@@ -77,8 +103,13 @@ class NetworkState:
                 if existing_node.addr == addr:
                     removed_node = self._peers.pop(i)
 
-                    # Notify observers
-                    self._notify_observers("peer_removed", removed_node.addr)
+                    # Publish event
+                    if self.event_bus:
+                        try:
+                            from cryptogenesis.events import NetworkPeerDisconnectedEvent
+                            self.event_bus.publish(NetworkPeerDisconnectedEvent(removed_node))
+                        except Exception as e:
+                            print(f"Error publishing NetworkPeerDisconnectedEvent: {e}")
 
                     return True
 
@@ -200,33 +231,12 @@ class NetworkState:
         with self._lock:
             return len(self._addresses)
 
-    def subscribe(self, observer: Callable):
+    def set_event_bus(self, event_bus: "EventBus"):
         """
-        Subscribe to state change events
+        Set the EventBus for publishing state change events.
+        This allows the NetworkState to be created before the EventBus.
 
-        Observer will be called with (event_type, *args) where event_type is:
-        - "peer_added": (addr)
-        - "peer_removed": (addr)
-        - "address_added": (addr)
-        - "address_removed": (addr)
+        Args:
+            event_bus: EventBus instance for publishing events
         """
-        with self._lock:
-            if observer not in self._observers:
-                self._observers.append(observer)
-
-    def unsubscribe(self, observer: Callable):
-        """Unsubscribe from state change events"""
-        with self._lock:
-            if observer in self._observers:
-                self._observers.remove(observer)
-
-    def _notify_observers(self, event_type: str, *args):
-        """Notify all observers of a state change"""
-        # Create a copy of observers list to avoid issues if observers modify the list
-        observers_copy = list(self._observers)
-        for observer in observers_copy:
-            try:
-                observer(event_type, *args)
-            except Exception:
-                # Don't let observer errors break state management
-                pass
+        self.event_bus = event_bus
