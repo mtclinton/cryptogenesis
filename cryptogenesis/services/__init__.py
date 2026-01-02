@@ -9,6 +9,7 @@ from typing import Optional
 
 from cryptogenesis.events import EventBus
 from cryptogenesis.services.blockchain_service import BlockchainService, BlockValidator
+from cryptogenesis.services.mempool_service import MempoolService
 from cryptogenesis.services.mining_service import MiningService
 from cryptogenesis.services.network_service import NetworkService
 from cryptogenesis.services.service_result import ServiceResult
@@ -32,6 +33,7 @@ class Services:
         wallet_service: WalletService,
         mining_service: MiningService,
         network_service: NetworkService,
+        mempool_service: MempoolService,
     ):
         """
         Initialize services container.
@@ -41,11 +43,13 @@ class Services:
             wallet_service: WalletService instance
             mining_service: MiningService instance
             network_service: NetworkService instance
+            mempool_service: MempoolService instance
         """
         self.blockchain_service = blockchain_service
         self.wallet_service = wallet_service
         self.mining_service = mining_service
         self.network_service = network_service
+        self.mempool_service = mempool_service
 
 
 def get_services(event_bus: Optional[EventBus] = None) -> Services:
@@ -90,6 +94,12 @@ def get_services(event_bus: Optional[EventBus] = None) -> Services:
         event_bus=event_bus
     )
     
+    # MempoolService (no dependencies, only state)
+    mempool_service = MempoolService(
+        mempool_state=mempool_state,
+        event_bus=event_bus
+    )
+    
     # NetworkService (currently a skeleton, no dependencies yet)
     network_service = NetworkService()
     
@@ -98,7 +108,8 @@ def get_services(event_bus: Optional[EventBus] = None) -> Services:
         blockchain_service=blockchain_service,
         wallet_service=wallet_service,
         mining_service=mining_service,
-        network_service=network_service
+        network_service=network_service,
+        mempool_service=mempool_service
     )
 
 
@@ -110,4 +121,5 @@ __all__ = [
     "WalletService",
     "MiningService",
     "NetworkService",
+    "MempoolService",
 ]
