@@ -11,3 +11,4 @@ class NetworkService:
     def __init__(self):
         """Initialize network service"""
         pass
+

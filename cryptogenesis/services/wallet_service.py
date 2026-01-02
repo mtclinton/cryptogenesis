@@ -160,6 +160,28 @@ class WalletService:
         except Exception:
             return []
     
+    def get_address(self) -> Optional[str]:
+        """
+        Get wallet address from first key.
+        
+        Returns:
+            Address string (hash160 of first key's public key) or None if no keys
+        """
+        try:
+            from cryptogenesis.crypto import hash160
+            
+            keys = self.wallet_state.get_all_keys()
+            if keys:
+                # Get first key's public key
+                first_key = list(keys.values())[0]
+                pubkey = first_key.public_key
+                # Convert to address (hash160)
+                address_hash = hash160(pubkey)
+                return address_hash.hex()[:40]
+            return None
+        except Exception:
+            return None
+    
     def load_from_storage(self) -> ServiceResult:
         """
         Load wallet from storage (disk/memory).
