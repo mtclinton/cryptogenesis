@@ -27,6 +27,7 @@ spec.loader.exec_module(network_module_file)
 # Re-export common types and constants
 Address = network_module_file.Address
 DEFAULT_PORT = network_module_file.DEFAULT_PORT
+
 Inv = network_module_file.Inv
 MessageHeader = network_module_file.MessageHeader
 Node = network_module_file.Node
@@ -45,6 +46,7 @@ find_node = network_module_file.find_node
 relay_inventory = network_module_file.relay_inventory
 set_network_mode = network_module_file.set_network_mode
 get_network_mode = network_module_file.get_network_mode
+
 start_node = network_module_file.start_node
 stop_node = network_module_file.stop_node
 
