@@ -332,12 +332,12 @@ else:
                 wallet_view = self.main_window.get_wallet_view()
                 if not wallet_view:
                     return
-                
+
                 # Get balance from service
                 balance = self.services.wallet_service.get_balance()
                 balance_str = self._format_money(balance)
                 wallet_view.update_balance(balance_str)
-                
+
                 # Get address from service
                 address = self._get_wallet_address()
                 wallet_view.update_address(address)

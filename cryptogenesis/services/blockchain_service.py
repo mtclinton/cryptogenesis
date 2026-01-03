@@ -104,19 +104,31 @@ class BlockchainService:
             ServiceResult with success status and data/error
         """
         try:
-            # Validate block using validator
-            is_valid, error_msg = self.validator.validate(block)
+            # Check if this is a private network block
+            from cryptogenesis.network import get_network_mode
+            is_private_network = get_network_mode() == "private"
+
+            # For private network, skip full validation (genesis block already validated)
+            if not is_private_network:
+                # Validate block using validator
+                is_valid, error_msg = self.validator.validate(block)
+
+                if not is_valid:
+                    return ServiceResult(
+                        success=False,
+                        error=error_msg or "Block validation failed"
+                    )
             
-            if not is_valid:
-                return ServiceResult(
-                    success=False,
-                    error=error_msg or "Block validation failed"
-                )
-            
-            # Get block height from chain
+            # Get block height
             block_hash = block.get_hash()
-            block_index = self.chain.get_block_index(block_hash)
-            height = block_index.height if block_index else -1
+            if is_private_network:
+                # For private network, calculate height as current + 1
+                current_height = self.blockchain_state.get_best_height()
+                height = current_height + 1
+            else:
+                # Get height from chain for mainnet
+                block_index = self.chain.get_block_index(block_hash)
+                height = block_index.height if block_index else -1
             
             # Add to blockchain state
             if not self.blockchain_state.add_block(block, height=height):

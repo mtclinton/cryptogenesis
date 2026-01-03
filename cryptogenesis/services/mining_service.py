@@ -38,10 +38,10 @@ class MiningService:
     def start_mining(self, node_id: Optional[int] = None) -> ServiceResult:
         """
         Start mining in background thread.
-        
+
         Args:
             node_id: Optional node ID for deterministic key generation
-            
+
         Returns:
             ServiceResult with success status
         """
@@ -52,11 +52,11 @@ class MiningService:
                         success=False,
                         error="Mining is already running"
                     )
-                
+
                 # Set mining flag
                 set_generate_bitcoins(True)
                 self._is_mining = True
-                
+
                 # Start mining thread
                 # Note: We use a wrapper function to integrate with blockchain_service
                 self._mining_thread = threading.Thread(
@@ -65,7 +65,15 @@ class MiningService:
                     daemon=True
                 )
                 self._mining_thread.start()
-                
+
+                # Publish event that mining started (wallet will be updated)
+                if self.event_bus:
+                    try:
+                        from cryptogenesis.events import WalletUpdatedEvent
+                        self.event_bus.publish(WalletUpdatedEvent({"action": "mining_started", "node_id": node_id}))
+                    except Exception as e:
+                        print(f"Warning: Failed to publish mining started event: {e}")
+
                 return ServiceResult(
                     success=True,
                     data={"thread_started": True}
@@ -114,38 +122,32 @@ class MiningService:
     def _mining_worker(self, node_id: Optional[int] = None):
         """
         Mining worker function that runs in background thread.
-        
-        This wraps the existing bitcoin_miner() function.
-        
-        NOTE: Currently, bitcoin_miner() uses chain.process_block() directly.
-        In the future, the mining code should be refactored to call
-        blockchain_service.add_block() when blocks are found, and publish
-        BlockMinedEvent through the event bus.
-        
+
+        Uses different miner based on network mode:
+        - Private network: bitcoin_miner_private_network (uses services directly)
+        - Mainnet: bitcoin_miner (uses legacy chain.process_block)
+
         Args:
             node_id: Optional node ID for deterministic key generation
         """
         try:
-            # The bitcoin_miner() function handles:
-            # - Block creation
-            # - Proof-of-work
-            # - Block processing via chain.process_block()
-            #
-            # TODO: Refactor bitcoin_miner() to use blockchain_service.add_block()
-            # instead of chain.process_block() directly. This requires:
-            # 1. Extracting block creation and mining logic
-            # 2. Calling blockchain_service.add_block() when block is found
-            # 3. Publishing BlockMinedEvent through event_bus after successful mining
-            #
-            # When refactored, the code should:
-            # - Call blockchain_service.add_block(block) when block is found
-            # - If successful, publish BlockMinedEvent(block) via event_bus
-            # - This ensures BlockMinedEvent is published after state update succeeds
-            #
-            # For now, we run bitcoin_miner() as-is, which still works correctly
-            # but doesn't use the service layer for block addition or event publishing.
-            
-            bitcoin_miner(node_id=node_id)
+            from cryptogenesis.network import get_network_mode
+
+            print("Mining worker thread started")
+
+            if get_network_mode() == "private":
+                # For private network, use the refactored miner that uses services
+                from cryptogenesis.mining import bitcoin_miner_private_network
+                bitcoin_miner_private_network(
+                    node_id=node_id,
+                    blockchain_service=self.blockchain_service,
+                    event_bus=self.event_bus
+                )
+            else:
+                # For mainnet, use the original bitcoin_miner (to be refactored later)
+                bitcoin_miner(node_id=node_id)
+
+            print("Mining worker thread finished")
         except Exception as e:
             # Log error but don't crash the service
             print(f"Error in mining worker: {e}")
@@ -153,6 +155,8 @@ class MiningService:
             traceback.print_exc()
         finally:
             # Ensure mining flag is reset when thread exits
+            print("Mining worker thread cleanup")
             with self._mining_lock:
                 self._is_mining = False
                 set_generate_bitcoins(False)
+                print("Mining worker thread cleanup completed")
