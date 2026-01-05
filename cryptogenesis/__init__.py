@@ -12,6 +12,10 @@ from cryptogenesis.block import (
     BlockIndex,
     BlockLocator,
     get_next_work_required,
+    set_genesis_mode,
+    get_genesis_mode,
+    create_private_genesis_block,
+    initialize_private_network,
 )
 from cryptogenesis.chain import BlockChain, get_chain
 from cryptogenesis.crypto import (
@@ -34,7 +38,6 @@ from cryptogenesis.mining import (
     stop_mining,
 )
 from cryptogenesis.network import (
-    MESSAGE_START,
     MSG_BLOCK,
     MSG_PRODUCT,
     MSG_REVIEW,
@@ -49,6 +52,8 @@ from cryptogenesis.network import (
     connect_node,
     find_node,
     relay_inventory,
+    set_network_mode,
+    get_network_mode,
     start_node,
     stop_node,
 )
@@ -95,6 +100,10 @@ __all__ = [
     "BlockLocator",
     "HASH_GENESIS_BLOCK",
     "get_next_work_required",
+    "set_genesis_mode",
+    "get_genesis_mode",
+    "create_private_genesis_block",
+    "initialize_private_network",
     # Chain
     "BlockChain",
     "get_chain",
@@ -130,7 +139,6 @@ __all__ = [
     # Network
     "Address",
     "Inv",
-    "MESSAGE_START",
     "MSG_BLOCK",
     "MSG_PRODUCT",
     "MSG_REVIEW",
@@ -143,6 +151,8 @@ __all__ = [
     "connect_node",
     "find_node",
     "relay_inventory",
+    "set_network_mode",
+    "get_network_mode",
     "start_node",
     "stop_node",
     # Mempool

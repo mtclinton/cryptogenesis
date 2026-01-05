@@ -15,11 +15,44 @@ from cryptogenesis.serialize import SER_NETWORK, DataStream
 from cryptogenesis.transaction import Transaction
 from cryptogenesis.uint256 import uint256
 
-# Message start bytes (magic bytes)
+# Message start bytes (magic bytes) - mainnet default
 MESSAGE_START = bytes([0xF9, 0xBE, 0xB4, 0xD9])
 
-# Default port
+# Default port - mainnet default
 DEFAULT_PORT = 8333
+
+# Global network mode flag
+_network_mode = "mainnet"
+
+def set_network_mode(mode: str):
+    """
+    Set the network mode and update constants accordingly.
+
+    Args:
+        mode: Network mode ("mainnet" or "private")
+    """
+    import cryptogenesis.network as network_module
+    network_module._network_mode = mode
+
+    if mode == "private":
+        try:
+            from cryptogenesis.config_private import MESSAGE_START as PRIVATE_MESSAGE_START
+            from cryptogenesis.config_private import DEFAULT_PORT as PRIVATE_DEFAULT_PORT
+            network_module.MESSAGE_START = PRIVATE_MESSAGE_START
+            network_module.DEFAULT_PORT = PRIVATE_DEFAULT_PORT
+            print(f"Switched to private network mode (port {network_module.DEFAULT_PORT})")
+        except ImportError:
+            print("Warning: Private network config not found, using mainnet parameters")
+    else:
+        # Reset to mainnet defaults
+        network_module.MESSAGE_START = bytes([0xF9, 0xBE, 0xB4, 0xD9])
+        network_module.DEFAULT_PORT = 8333
+        print("Using mainnet network parameters")
+
+def get_network_mode() -> str:
+    """Get current network mode"""
+    import cryptogenesis.network as network_module
+    return getattr(network_module, '_network_mode', 'mainnet')
 
 # Node services
 NODE_NETWORK = 1 << 0

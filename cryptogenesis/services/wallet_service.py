@@ -163,14 +163,33 @@ class WalletService:
     def get_address(self) -> Optional[str]:
         """
         Get wallet address from first key.
-        
+        Syncs with global wallet if no keys in wallet_state.
+
         Returns:
             Address string (hash160 of first key's public key) or None if no keys
         """
         try:
             from cryptogenesis.crypto import hash160
-            
+            from cryptogenesis.wallet import map_keys, keys_lock
+
             keys = self.wallet_state.get_all_keys()
+
+            # If no keys in wallet_state, try to sync from global wallet
+            if not keys:
+                with keys_lock:
+                    for pubkey, privkey in map_keys.items():
+                        try:
+                            from cryptogenesis.crypto import Key
+                            key = Key()
+                            key.set_privkey(privkey)
+                            if self.wallet_state.add_key(key):
+                                print(f"Synced key from global wallet to wallet service")
+                        except Exception as e:
+                            print(f"Warning: Failed to sync key: {e}")
+
+                # Re-check keys after sync
+                keys = self.wallet_state.get_all_keys()
+
             if keys:
                 # Get first key's public key
                 first_key = list(keys.values())[0]
@@ -193,16 +212,41 @@ class WalletService:
             ServiceResult with success status
         """
         try:
-            # For now, wallet is in-memory and already loaded
-            # In a full implementation, this would:
-            # 1. Load keys from disk
-            # 2. Load transactions from disk
-            # 3. Update wallet_state
-            
-            # Check if we have any keys or transactions
+            # Load keys from global wallet into wallet_state
+            from cryptogenesis.wallet import map_keys, map_pub_keys, keys_lock, get_wallet
+            from cryptogenesis.crypto import Key
+
+            # Import keys from global wallet maps to wallet_state
+            imported_keys = 0
+            with keys_lock:
+                for pubkey, privkey in map_keys.items():
+                    try:
+                        key = Key()
+                        key.set_privkey(privkey)
+                        if self.wallet_state.add_key(key):
+                            imported_keys += 1
+                    except Exception as e:
+                        print(f"Warning: Failed to import key: {e}")
+
+            # Import transactions from global wallet to wallet_state
+            imported_txs = 0
+            global_wallet_txs = get_wallet()
+            for tx in global_wallet_txs.values():
+                try:
+                    if self.wallet_state.add_transaction(tx):
+                        imported_txs += 1
+                except Exception as e:
+                    print(f"Warning: Failed to import transaction: {e}")
+
+            if imported_keys > 0:
+                print(f"Imported {imported_keys} keys from global wallet")
+            if imported_txs > 0:
+                print(f"Imported {imported_txs} transactions from global wallet")
+
+            # Check if we have any keys or transactions in wallet_state
             keys = self.wallet_state.get_all_keys()
             transactions = self.wallet_state.get_all_transactions()
-            
+
             if not keys and not transactions:
                 return ServiceResult(
                     success=False,
