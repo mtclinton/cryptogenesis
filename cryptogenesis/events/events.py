@@ -4,7 +4,7 @@ Event Type Definitions
 Base event class and event type definitions.
 """
 
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from cryptogenesis.block import Block
 from cryptogenesis.transaction import Transaction
@@ -12,43 +12,43 @@ from cryptogenesis.util import get_time
 
 # Import Node from the network module file (not package) to avoid circular import
 if TYPE_CHECKING:
-    from cryptogenesis.network import Node
+    from cryptogenesis.network_core import Node
 else:
     # Import directly from the .py file using importlib to avoid package import
     import importlib.util
-    import sys
     import os
-    
+    import sys
+
     # Get the path to network.py (not the package)
-    network_file_path = os.path.join(os.path.dirname(__file__), '..', 'network.py')
+    network_file_path = os.path.join(os.path.dirname(__file__), "..", "network.py")
     network_file_path = os.path.abspath(network_file_path)
-    
+
     spec = importlib.util.spec_from_file_location("network_module", network_file_path)
     network_module = importlib.util.module_from_spec(spec)
-    sys.modules['network_module'] = network_module
+    sys.modules["network_module"] = network_module
     spec.loader.exec_module(network_module)
-    
+
     Node = network_module.Node
 
 
 class Event:
     """
     Base event class.
-    
+
     All events inherit from this class.
     Contains timestamp and data fields.
     """
-    
+
     def __init__(self, data: Optional[Any] = None):
         """
         Initialize event.
-        
+
         Args:
             data: Optional event data
         """
         self.timestamp: float = float(get_time())
         self.data: Optional[Any] = data
-    
+
     def __repr__(self) -> str:
         """String representation for debugging"""
         return f"{self.__class__.__name__}(timestamp={self.timestamp}, data={repr(self.data)})"
@@ -58,11 +58,11 @@ class BlockAddedEvent(Event):
     """
     Event published when a block is added to the blockchain.
     """
-    
+
     def __init__(self, block: Block):
         """
         Initialize block added event.
-        
+
         Args:
             block: Block that was added
         """
@@ -74,11 +74,11 @@ class BlockMinedEvent(Event):
     """
     Event published when a block is successfully mined.
     """
-    
+
     def __init__(self, block: Block):
         """
         Initialize block mined event.
-        
+
         Args:
             block: Block that was mined
         """
@@ -90,11 +90,11 @@ class TransactionAddedEvent(Event):
     """
     Event published when a transaction is added to the mempool.
     """
-    
+
     def __init__(self, tx: Transaction):
         """
         Initialize transaction added event.
-        
+
         Args:
             tx: Transaction that was added
         """
@@ -106,11 +106,11 @@ class WalletUpdatedEvent(Event):
     """
     Event published when wallet state is updated.
     """
-    
+
     def __init__(self, wallet_data: Dict):
         """
         Initialize wallet updated event.
-        
+
         Args:
             wallet_data: Dictionary containing wallet update information
         """
@@ -122,11 +122,11 @@ class NetworkPeerConnectedEvent(Event):
     """
     Event published when a peer connects to the network.
     """
-    
+
     def __init__(self, peer: Node):
         """
         Initialize network peer connected event.
-        
+
         Args:
             peer: Node that connected
         """
@@ -138,14 +138,13 @@ class NetworkPeerDisconnectedEvent(Event):
     """
     Event published when a peer disconnects from the network.
     """
-    
+
     def __init__(self, peer: Node):
         """
         Initialize network peer disconnected event.
-        
+
         Args:
             peer: Node that disconnected
         """
         super().__init__(data=peer)
         self.peer: Node = peer
-

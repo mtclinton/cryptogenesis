@@ -529,7 +529,7 @@ class BlockChain:
         if self.best_hash == block_hash:
             print("AcceptBlock: This is the new best block, relaying...")
             # Import here to avoid circular dependency
-            from cryptogenesis.network import MSG_BLOCK, Inv, relay_inventory
+            from cryptogenesis.network_core import MSG_BLOCK, Inv, relay_inventory
 
             inv = Inv(MSG_BLOCK, block_hash)
             relay_inventory(inv)

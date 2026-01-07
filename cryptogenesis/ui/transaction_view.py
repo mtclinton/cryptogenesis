@@ -10,6 +10,7 @@ from typing import Callable, Optional
 # Try to import wxPython
 try:
     import wx
+
     WX_AVAILABLE = True
 except ImportError:
     wx = None
@@ -20,6 +21,7 @@ if not WX_AVAILABLE:
     # Stub classes if wxPython is not available
     class TransactionView:
         pass
+
 else:
 
     class TransactionView:
@@ -31,13 +33,11 @@ else:
         def __init__(self, parent):
             """
             Initialize transaction view.
-            
+
             Args:
                 parent: Parent wx.Window
             """
-            self.list_ctrl = wx.ListCtrl(
-                parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL
-            )
+            self.list_ctrl = wx.ListCtrl(parent, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
             self._create_ui()
 
         def _create_ui(self):
@@ -52,7 +52,7 @@ else:
         def set_on_activated(self, handler: Callable):
             """
             Set handler for transaction activation (double-click).
-            
+
             Args:
                 handler: Callable that takes event parameter
             """
@@ -63,17 +63,10 @@ else:
             if self.list_ctrl:
                 self.list_ctrl.DeleteAllItems()
 
-        def add_transaction(
-            self,
-            date: str,
-            tx_type: str,
-            address: str,
-            amount: str,
-            status: str
-        ):
+        def add_transaction(self, date: str, tx_type: str, address: str, amount: str, status: str):
             """
             Add a transaction row to the list.
-            
+
             Args:
                 date: Date string
                 tx_type: Transaction type (e.g., "Send", "Receive")
@@ -82,9 +75,7 @@ else:
                 status: Status string (e.g., "Confirmed")
             """
             if self.list_ctrl:
-                index = self.list_ctrl.InsertItem(
-                    self.list_ctrl.GetItemCount(), date
-                )
+                index = self.list_ctrl.InsertItem(self.list_ctrl.GetItemCount(), date)
                 self.list_ctrl.SetItem(index, 1, tx_type)
                 self.list_ctrl.SetItem(index, 2, address)
                 self.list_ctrl.SetItem(index, 3, amount)
@@ -93,5 +84,4 @@ else:
         def get_list_ctrl(self):
             """Get the list control widget"""
             return self.list_ctrl
-
 

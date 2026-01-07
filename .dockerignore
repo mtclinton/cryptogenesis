@@ -1,24 +1,59 @@
-__pycache__/
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
 *.pyc
 *.pyo
 *.pyd
 .Python
-*.so
-*.egg
-*.egg-info
-dist/
-build/
-.git/
-.gitignore
+env
+venv
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.pytest_cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.cache
+.mypy_cache
+
+# Documentation
+*.md
+docs/
+IMPLEMENTATION_STEPS.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Data directories (will be mounted as volumes)
+data/
+
+# Test files
+tests/
 .pytest_cache/
 .coverage
-htmlcov/
-.env
-.venv
-venv/
-ENV/
-*.md
-!README.md
-tests/
-Makefile
-Bitcoin-v0.1/

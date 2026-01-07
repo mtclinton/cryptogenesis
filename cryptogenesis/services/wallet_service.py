@@ -17,10 +17,10 @@ from cryptogenesis.wallet import WalletTx
 class WalletService:
     """
     Service for wallet operations.
-    
+
     Orchestrates wallet operations with state management.
     """
-    
+
     def __init__(
         self,
         wallet_state: WalletState,
@@ -29,7 +29,7 @@ class WalletService:
     ):
         """
         Initialize wallet service.
-        
+
         Args:
             wallet_state: WalletState instance for state management
             blockchain_service: BlockchainService instance for blockchain operations
@@ -38,38 +38,29 @@ class WalletService:
         self.wallet_state = wallet_state
         self.blockchain_service = blockchain_service
         self.event_bus = event_bus
-    
+
     def add_key(self, key: Key) -> ServiceResult:
         """
         Add key to wallet.
-        
+
         Args:
             key: Key object to add
-            
+
         Returns:
             ServiceResult with success status
         """
         try:
             if self.wallet_state.add_key(key):
-                return ServiceResult(
-                    success=True,
-                    data=key
-                )
+                return ServiceResult(success=True, data=key)
             else:
-                return ServiceResult(
-                    success=False,
-                    error="Key already exists in wallet"
-                )
+                return ServiceResult(success=False, error="Key already exists in wallet")
         except Exception as e:
-            return ServiceResult(
-                success=False,
-                error=f"Exception while adding key: {str(e)}"
-            )
-    
+            return ServiceResult(success=False, error=f"Exception while adding key: {str(e)}")
+
     def get_balance(self) -> int:
         """
         Calculate balance from wallet transactions.
-        
+
         Returns:
             Total wallet balance (sum of credits minus debits)
         """
@@ -77,30 +68,30 @@ class WalletService:
             total = 0
             # Get all wallet transactions
             transactions = self.wallet_state.get_all_transactions()
-            
+
             # Calculate balance from each transaction
             for wtx in transactions.values():
                 # get_credit() returns outputs that are mine
                 # get_debit() returns inputs that are mine (spent)
                 total += wtx.get_credit()  # type: ignore[attr-defined]
                 total -= wtx.get_debit()  # type: ignore[attr-defined]
-            
+
             return total
         except Exception:
             # Return 0 on error
             return 0
-    
+
     def send_transaction(self, address: str, amount: int) -> ServiceResult:
         """
         Create and send a transaction.
-        
+
         Creates a transaction, signs it, and adds it to mempool.
         Mempool service integration will be added later.
-        
+
         Args:
             address: Recipient address (public key hash)
             amount: Amount to send in satoshi
-            
+
         Returns:
             ServiceResult with transaction data or error
         """
@@ -108,19 +99,15 @@ class WalletService:
             # Check if we have any keys
             keys = self.wallet_state.get_all_keys()
             if not keys:
-                return ServiceResult(
-                    success=False,
-                    error="No keys in wallet"
-                )
-            
+                return ServiceResult(success=False, error="No keys in wallet")
+
             # Check balance
             balance = self.get_balance()
             if balance < amount:
                 return ServiceResult(
-                    success=False,
-                    error=f"Insufficient balance: {balance} < {amount}"
+                    success=False, error=f"Insufficient balance: {balance} < {amount}"
                 )
-            
+
             # TODO: Create transaction
             # This is a placeholder - full implementation would:
             # 1. Select UTXOs to spend
@@ -129,28 +116,27 @@ class WalletService:
             # 4. Sign transaction inputs
             # 5. Add to mempool via mempool_service (to be added later)
             # 6. Publish TransactionAddedEvent after successful addition to mempool
-            
+
             # When transaction is successfully created and added to mempool:
             # if self.event_bus:
             #     try:
             #         self.event_bus.publish(TransactionAddedEvent(tx))
             #     except Exception as e:
             #         print(f"Error publishing TransactionAddedEvent: {e}")
-            
+
             return ServiceResult(
                 success=False,
-                error="Transaction creation not yet implemented (requires UTXO selection and signing)"
+                error="Transaction creation not yet implemented (requires UTXO selection and signing)",
             )
         except Exception as e:
             return ServiceResult(
-                success=False,
-                error=f"Exception while sending transaction: {str(e)}"
+                success=False, error=f"Exception while sending transaction: {str(e)}"
             )
-    
+
     def get_transactions(self) -> List[WalletTx]:
         """
         Get all wallet transactions.
-        
+
         Returns:
             List of WalletTx objects
         """
@@ -159,7 +145,7 @@ class WalletService:
             return list(transactions.values())
         except Exception:
             return []
-    
+
     def get_address(self) -> Optional[str]:
         """
         Get wallet address from first key.
@@ -170,7 +156,7 @@ class WalletService:
         """
         try:
             from cryptogenesis.crypto import hash160
-            from cryptogenesis.wallet import map_keys, keys_lock
+            from cryptogenesis.wallet import keys_lock, map_keys
 
             keys = self.wallet_state.get_all_keys()
 
@@ -180,6 +166,7 @@ class WalletService:
                     for pubkey, privkey in map_keys.items():
                         try:
                             from cryptogenesis.crypto import Key
+
                             key = Key()
                             key.set_privkey(privkey)
                             if self.wallet_state.add_key(key):
@@ -200,21 +187,21 @@ class WalletService:
             return None
         except Exception:
             return None
-    
+
     def load_from_storage(self) -> ServiceResult:
         """
         Load wallet from storage (disk/memory).
-        
+
         For now, this is a placeholder that returns success.
         In a full implementation, this would load keys and transactions from disk.
-        
+
         Returns:
             ServiceResult with success status
         """
         try:
             # Load keys from global wallet into wallet_state
-            from cryptogenesis.wallet import map_keys, map_pub_keys, keys_lock, get_wallet
             from cryptogenesis.crypto import Key
+            from cryptogenesis.wallet import get_wallet, keys_lock, map_keys, map_pub_keys
 
             # Import keys from global wallet maps to wallet_state
             imported_keys = 0
@@ -248,20 +235,12 @@ class WalletService:
             transactions = self.wallet_state.get_all_transactions()
 
             if not keys and not transactions:
-                return ServiceResult(
-                    success=False,
-                    error="No wallet data found in storage"
-                )
-            
+                return ServiceResult(success=False, error="No wallet data found in storage")
+
             return ServiceResult(
-                success=True,
-                data={
-                    "keys": len(keys),
-                    "transactions": len(transactions)
-                }
+                success=True, data={"keys": len(keys), "transactions": len(transactions)}
             )
         except Exception as e:
             return ServiceResult(
-                success=False,
-                error=f"Exception while loading from storage: {str(e)}"
+                success=False, error=f"Exception while loading from storage: {str(e)}"
             )

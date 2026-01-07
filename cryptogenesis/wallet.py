@@ -361,7 +361,7 @@ class WalletTx(MerkleTx):
 
     def relay_wallet_transaction(self, txdb: TxDB):
         """Relay wallet transaction to network"""
-        from cryptogenesis.network import MSG_TX, Inv, relay_inventory
+        from cryptogenesis.network_core import MSG_TX, Inv, relay_inventory
 
         # Relay supporting transactions
         for tx in self.vtx_prev:

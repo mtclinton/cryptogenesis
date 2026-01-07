@@ -10,6 +10,7 @@ from typing import Optional
 # Try to import wxPython
 try:
     import wx
+
     WX_AVAILABLE = True
 except ImportError:
     wx = None
@@ -20,6 +21,7 @@ if not WX_AVAILABLE:
     # Stub classes if wxPython is not available
     class MiningView:
         pass
+
 else:
 
     class MiningView:
@@ -31,7 +33,7 @@ else:
         def __init__(self, parent):
             """
             Initialize mining view.
-            
+
             Args:
                 parent: Parent wx.Window
             """
@@ -53,7 +55,7 @@ else:
         def update_status(self, status: str):
             """
             Update mining status display.
-            
+
             Args:
                 status: Status string (e.g., "Running", "Stopped")
             """
@@ -63,5 +65,4 @@ else:
         def get_panel(self):
             """Get the main panel widget"""
             return self.panel
-
 

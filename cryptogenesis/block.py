@@ -24,6 +24,7 @@ HASH_GENESIS_BLOCK = uint256("0x000000000019d6689c085ae165831e934ff763ae46a2a6c1
 # Global network mode for genesis block
 _genesis_mode = "mainnet"
 
+
 def set_genesis_mode(mode: str):
     """
     Set the genesis block mode.
@@ -32,11 +33,13 @@ def set_genesis_mode(mode: str):
         mode: Genesis mode ("mainnet" or "private")
     """
     import cryptogenesis.block as block_module
+
     block_module._genesis_mode = mode
 
     if mode == "private":
         try:
             from cryptogenesis.config_private import HASH_GENESIS_BLOCK_PRIVATE
+
             if HASH_GENESIS_BLOCK_PRIVATE:
                 block_module.HASH_GENESIS_BLOCK = HASH_GENESIS_BLOCK_PRIVATE
                 print("Using private network genesis block")
@@ -46,13 +49,18 @@ def set_genesis_mode(mode: str):
             print("Warning: Private network config not found, using mainnet genesis")
     else:
         # Reset to mainnet genesis
-        block_module.HASH_GENESIS_BLOCK = uint256("0x000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f")
+        block_module.HASH_GENESIS_BLOCK = uint256(
+            "0x000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+        )
         print("Using mainnet genesis block")
+
 
 def get_genesis_mode() -> str:
     """Get current genesis mode"""
     import cryptogenesis.block as block_module
-    return getattr(block_module, '_genesis_mode', 'mainnet')
+
+    return getattr(block_module, "_genesis_mode", "mainnet")
+
 
 def create_private_genesis_block():
     """
@@ -64,21 +72,13 @@ def create_private_genesis_block():
     try:
         from cryptogenesis.config_private import (
             GENESIS_BLOCK_TIME_PRIVATE,
+            GENESIS_COINBASE_MESSAGE,
             PRIVATE_NETWORK_BITS,
-            GENESIS_COINBASE_MESSAGE
         )
     except ImportError:
         raise ValueError("Private network configuration not found")
 
-    from cryptogenesis import (
-        COIN,
-        Block,
-        Script,
-        Transaction,
-        TxIn,
-        TxOut,
-        uint256,
-    )
+    from cryptogenesis import COIN, Block, Script, Transaction, TxIn, TxOut, uint256
     from cryptogenesis.transaction import OP_CHECKSIG
 
     # Create custom coinbase transaction
@@ -88,8 +88,9 @@ def create_private_genesis_block():
     tx_new.vin[0].script_sig = Script()
 
     # Add timestamp and custom message
-    import time
     import struct
+    import time
+
     timestamp = GENESIS_COINBASE_MESSAGE + struct.pack("<I", int(time.time()))
     tx_new.vin[0].script_sig.push_int(486604799, force_bignum=True)
     tx_new.vin[0].script_sig.push_int(4, force_bignum=True)
@@ -102,7 +103,9 @@ def create_private_genesis_block():
 
     # Use a simple test key for private network
     # In a real implementation, you'd generate a proper key
-    test_pubkey = bytes.fromhex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f")
+    test_pubkey = bytes.fromhex(
+        "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"
+    )
     tx_new.vout[0].script_pubkey.push_data(test_pubkey)
     tx_new.vout[0].script_pubkey.push_opcode(OP_CHECKSIG)
 
@@ -132,6 +135,7 @@ def create_private_genesis_block():
 
     return block
 
+
 def initialize_private_network(blockchain_service=None):
     """
     Initialize the private network by creating and setting the genesis block.
@@ -149,16 +153,19 @@ def initialize_private_network(blockchain_service=None):
 
         # Update the config with the computed genesis hash
         import cryptogenesis.config_private as config
+
         config.HASH_GENESIS_BLOCK_PRIVATE = genesis_hash
 
         # Update the block module's genesis block hash
         import cryptogenesis.block as block_module
+
         block_module.HASH_GENESIS_BLOCK = genesis_hash
 
         # Add the genesis block to both chain systems if service is provided
         if blockchain_service:
             # For genesis block, add to both old chain and new blockchain_state
             from cryptogenesis.chain import get_chain
+
             chain = get_chain()
 
             # Add to old chain system first
@@ -183,6 +190,7 @@ def initialize_private_network(blockchain_service=None):
     except Exception as e:
         print(f"Failed to initialize private network: {e}")
         raise
+
 
 # Proof of work limit
 PROOF_OF_WORK_LIMIT = uint256("0x00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff")

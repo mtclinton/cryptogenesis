@@ -63,6 +63,7 @@ GENESIS_COINBASE_MESSAGE = b"Cryptogenesis Private Network Genesis Block - 2021"
 # UTILITY FUNCTIONS
 # ============================================================================
 
+
 def get_private_network_config():
     """
     Get all private network configuration parameters.
@@ -71,14 +72,15 @@ def get_private_network_config():
         dict: Dictionary containing all private network parameters
     """
     return {
-        'message_start': MESSAGE_START,
-        'default_port': DEFAULT_PORT,
-        'network_name': NETWORK_NAME,
-        'genesis_bits': PRIVATE_NETWORK_BITS,
-        'genesis_time': GENESIS_BLOCK_TIME_PRIVATE,
-        'allow_instant_blocks': ALLOW_INSTANT_BLOCKS,
-        'coinbase_message': GENESIS_COINBASE_MESSAGE,
+        "message_start": MESSAGE_START,
+        "default_port": DEFAULT_PORT,
+        "network_name": NETWORK_NAME,
+        "genesis_bits": PRIVATE_NETWORK_BITS,
+        "genesis_time": GENESIS_BLOCK_TIME_PRIVATE,
+        "allow_instant_blocks": ALLOW_INSTANT_BLOCKS,
+        "coinbase_message": GENESIS_COINBASE_MESSAGE,
     }
+
 
 def is_private_network():
     """

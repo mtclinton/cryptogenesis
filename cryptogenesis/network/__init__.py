@@ -5,23 +5,24 @@ Network functionality separated from state management.
 Contains network communication, peer management, and message handling.
 """
 
-# Import new network classes
-from cryptogenesis.network.network_manager import NetworkManager
-from cryptogenesis.network.peer_manager import PeerManager
-from cryptogenesis.network.message_handler import MessageHandler
-from cryptogenesis.network.message_sender import MessageSender
-
 # Re-export constants and types from the network.py module file for backward compatibility
 # Import directly from the .py file to avoid circular imports
 import importlib.util
 import os
 import sys
 
-network_file_path = os.path.join(os.path.dirname(__file__), '..', 'network.py')
+from cryptogenesis.network.message_handler import MessageHandler
+from cryptogenesis.network.message_sender import MessageSender
+
+# Import new network classes
+from cryptogenesis.network.network_manager import NetworkManager
+from cryptogenesis.network.peer_manager import PeerManager
+
+network_file_path = os.path.join(os.path.dirname(__file__), "..", "network_core.py")
 network_file_path = os.path.abspath(network_file_path)
 spec = importlib.util.spec_from_file_location("network_module_file", network_file_path)
 network_module_file = importlib.util.module_from_spec(spec)
-sys.modules['network_module_file'] = network_module_file
+sys.modules["network_module_file"] = network_module_file
 spec.loader.exec_module(network_module_file)
 
 # Re-export common types and constants

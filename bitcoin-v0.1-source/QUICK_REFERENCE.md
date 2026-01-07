@@ -213,3 +213,4 @@ MAX_SIZE = 0x02000000         // 32 MB max block size
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Detailed architecture documentation
 - [README.md](README.md) - Directory structure and overview
+

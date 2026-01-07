@@ -281,11 +281,11 @@ def bitcoin_miner_private_network(
         blockchain_service: BlockchainService instance
         event_bus: EventBus instance for publishing events
     """
-    import os
     import hashlib
+    import os
 
+    from cryptogenesis.network_core import get_network_mode
     from cryptogenesis.wallet import add_key
-    from cryptogenesis.network import get_network_mode
 
     print("BitcoinMiner: Private network mining started")
 
@@ -302,6 +302,7 @@ def bitcoin_miner_private_network(
     # Verify the key was created correctly
     pubkey = key.get_pubkey()
     from cryptogenesis.crypto import hash160
+
     wallet_addr = hash160(pubkey).hex()
     print(f"BitcoinMiner: Wallet address = {wallet_addr[:32]}...")
 
@@ -315,6 +316,7 @@ def bitcoin_miner_private_network(
         if not pindex_prev:
             # If no blocks, use the private genesis block as previous
             from cryptogenesis.block import get_private_genesis_block
+
             pindex_prev = get_private_genesis_block()
             if not pindex_prev:
                 print("BitcoinMiner: Waiting for private genesis block to be initialized...")
@@ -328,12 +330,9 @@ def bitcoin_miner_private_network(
 
         # Create new block
         from cryptogenesis.config_private import PRIVATE_NETWORK_BITS
+
         block = create_new_block_private_network(
-            pindex_prev,
-            bn_extra_nonce,
-            PRIVATE_NETWORK_BITS,
-            get_time(),
-            pubkey
+            pindex_prev, bn_extra_nonce, PRIVATE_NETWORK_BITS, get_time(), pubkey
         )
 
         if not block:
@@ -395,6 +394,7 @@ def bitcoin_miner_private_network(
                     print(f"✅ Private network block accepted! New height: {current_height}")
                     if event_bus:
                         from cryptogenesis.events import BlockMinedEvent
+
                         event_bus.publish(BlockMinedEvent(block))
                 else:
                     print(f"❌ Private network block rejected: {result.error}")
@@ -419,9 +419,8 @@ def create_new_block_private_network(pindex_prev, bn_extra_nonce, n_bits, n_time
 
     Simplified version that creates a coinbase transaction directly.
     """
-    from cryptogenesis.transaction import Transaction, TxIn, TxOut, OutPoint
+    from cryptogenesis.transaction import OutPoint, Script, Transaction, TxIn, TxOut
     from cryptogenesis.uint256 import uint256
-    from cryptogenesis.transaction import Script
 
     # Create coinbase transaction
     tx_new = Transaction()
@@ -433,7 +432,7 @@ def create_new_block_private_network(pindex_prev, bn_extra_nonce, n_bits, n_time
     # Add extra nonce to coinbase script (simplified)
     script_sig = bytearray()
     script_sig.extend(b"cryptogenesis-private")
-    script_sig.extend(bn_extra_nonce.to_bytes(4, 'little'))
+    script_sig.extend(bn_extra_nonce.to_bytes(4, "little"))
     tx_new.vin[0].script_sig = Script(script_sig)
 
     tx_new.vout = [TxOut()]
@@ -450,7 +449,9 @@ def create_new_block_private_network(pindex_prev, bn_extra_nonce, n_bits, n_time
     # Create block
     block = Block()
     block.version = 1
-    block.prev_block_hash = pindex_prev.get_hash() if hasattr(pindex_prev, 'get_hash') else pindex_prev.hash
+    block.prev_block_hash = (
+        pindex_prev.get_hash() if hasattr(pindex_prev, "get_hash") else pindex_prev.hash
+    )
     block.time = n_time
     block.bits = n_bits
     block.nonce = 0
@@ -511,9 +512,12 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
             if get_network_mode() == "private":
                 try:
                     import main
+
                     global_services = main._global_services
                     if global_services and global_services.blockchain_service:
-                        height = global_services.blockchain_service.blockchain_state.get_best_height()
+                        height = (
+                            global_services.blockchain_service.blockchain_state.get_best_height()
+                        )
                         print(f"BitcoinMiner: Mining loop active (height: {height})")
                     else:
                         print("BitcoinMiner: Mining loop active (height: unknown)")
@@ -523,14 +527,18 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
                 print(f"BitcoinMiner: Mining loop active (height: {chain.best_height})")
 
         # For private network, use simplified logic
-        from cryptogenesis.network import get_network_mode
+        from cryptogenesis.network_core import get_network_mode
+
         if get_network_mode() == "private":
             # For private network, just check if we have a blockchain
             try:
                 import main
+
                 global_services = main._global_services
                 if global_services and global_services.blockchain_service:
-                    blockchain_height = global_services.blockchain_service.blockchain_state.get_best_height()
+                    blockchain_height = (
+                        global_services.blockchain_service.blockchain_state.get_best_height()
+                    )
                     if blockchain_height < 0:
                         time.sleep(1.0)
                         continue
@@ -570,6 +578,7 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
         if get_network_mode() == "private" and pindex_prev is None:
             # For private network, use our configured difficulty
             from cryptogenesis.config_private import PRIVATE_NETWORK_BITS
+
             n_bits = PRIVATE_NETWORK_BITS
             # Use genesis hash as prev_block_hash for first block
             prev_block_hash = uint256(0)  # Genesis prev hash is all zeros
@@ -619,7 +628,9 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
             print(f"Mining: target={target_hex}, nonce starting at {block.nonce}")
         except (struct.error, OverflowError):
             # Target too large
-            print(f"Mining: target too large (0x{hash_target.pn[0]:08x}{hash_target.pn[1]:08x}...), nonce starting at {block.nonce}")
+            print(
+                f"Mining: target too large (0x{hash_target.pn[0]:08x}{hash_target.pn[1]:08x}...), nonce starting at {block.nonce}"
+            )
             print(f"Block bits: 0x{block.bits:08x}, difficulty should be very easy")
 
         # IMPORTANT: Use the same hashing method as block.get_hash()
@@ -725,16 +736,24 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
                     # For private network, add directly to blockchain_state
                     try:
                         import main
+
                         global_services = main._global_services
                         if global_services and global_services.blockchain_service:
-                            current_height = global_services.blockchain_service.blockchain_state.get_best_height()
+                            current_height = (
+                                global_services.blockchain_service.blockchain_state.get_best_height()
+                            )
                             result = global_services.blockchain_service.add_block(block)
                             if result.success:
-                                print(f"✅ Private network block accepted! New height: {current_height + 1}")
+                                print(
+                                    f"✅ Private network block accepted! New height: {current_height + 1}"
+                                )
                                 # Publish block mined event
                                 if global_services.blockchain_service.event_bus:
                                     from cryptogenesis.events import BlockMinedEvent
-                                    global_services.blockchain_service.event_bus.publish(BlockMinedEvent(block))
+
+                                    global_services.blockchain_service.event_bus.publish(
+                                        BlockMinedEvent(block)
+                                    )
                                 process_result = True
                             else:
                                 print(f"❌ Private network block rejected: {result.error}")
@@ -786,9 +805,12 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
                     # For private network, check blockchain_state
                     try:
                         import main
+
                         global_services = main._global_services
                         if global_services and global_services.blockchain_service:
-                            current_height = global_services.blockchain_service.blockchain_state.get_best_height()
+                            current_height = (
+                                global_services.blockchain_service.blockchain_state.get_best_height()
+                            )
                             if current_height != pindex_prev.height:
                                 break
                     except (ImportError, AttributeError):

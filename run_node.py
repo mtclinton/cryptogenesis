@@ -20,7 +20,7 @@ os.environ["PYTHONUNBUFFERED"] = "1"  # noqa: E402
 
 from cryptogenesis.chain import get_chain  # noqa: E402
 from cryptogenesis.mining import start_mining, stop_mining  # noqa: E402
-from cryptogenesis.network import Address, connect_node, start_node, stop_node  # noqa: E402
+from cryptogenesis.network_core import Address, connect_node, start_node, stop_node  # noqa: E402
 from cryptogenesis.transaction import COIN, Script, Transaction, TxIn, TxOut  # noqa: E402
 from cryptogenesis.wallet import add_key  # noqa: E402
 

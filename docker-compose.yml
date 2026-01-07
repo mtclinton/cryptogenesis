@@ -1,160 +1,106 @@
-# NOTE: This implementation uses in-memory storage
-# All blockchain data, transactions, and wallet state
-# will be lost when containers stop/restart.
-# Each node starts fresh with only the genesis block.
-# Nodes will sync from peers to rebuild the blockchain.
+version: '3.8'
 
 services:
+  # Mining Node (produces blocks)
   node1:
     build: .
-    container_name: bitcoin-node-1
+    container_name: cryptogenesis-node1
+    ports:
+      - "18333:18333"
     environment:
       - NODE_ID=1
-      - NODE_PORT=8333
+      - NETWORK_MODE=private
+      - ENABLE_MINING=true
+      - ENABLE_GUI=false
+      - DATA_DIR=/app/data/node1
+    volumes:
+      - ./data/node1:/app/data/node1
+      - ./config/node1:/app/config:ro
+    command: ["--private-network", "--mining"]
     networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.11
-    ports:
-      - "8333:8333"
-      - "8081:8081"
-    command: python run_node.py --node-id 1 --port 8333 --peers node2:8333,node3:8333,node4:8333,node5:8333
+      - cryptogenesis-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "from cryptogenesis.services import get_services; services = get_services(); print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
+  # Relay Node (relays transactions and blocks)
   node2:
     build: .
-    container_name: bitcoin-node-2
+    container_name: cryptogenesis-node2
+    ports:
+      - "18334:18333"
     environment:
       - NODE_ID=2
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.12
-    ports:
-      - "8334:8333"
-    command: python run_node.py --node-id 2 --port 8333 --peers node1:8333,node3:8333,node6:8333,node7:8333
-
-  node3:
-    build: .
-    container_name: bitcoin-node-3
-    environment:
-      - NODE_ID=3
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.13
-    ports:
-      - "8335:8333"
-    command: python run_node.py --node-id 3 --port 8333 --peers node1:8333,node2:8333,node8:8333,node9:8333
-
-  node4:
-    build: .
-    container_name: bitcoin-node-4
-    environment:
-      - NODE_ID=4
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.14
-    ports:
-      - "8336:8333"
-    command: python run_node.py --node-id 4 --port 8333 --peers node1:8333,node5:8333,node10:8333
-
-  node5:
-    build: .
-    container_name: bitcoin-node-5
-    environment:
-      - NODE_ID=5
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.15
-    ports:
-      - "8337:8333"
-    command: python run_node.py --node-id 5 --port 8333 --peers node1:8333,node4:8333,node6:8333
-
-  node6:
-    build: .
-    container_name: bitcoin-node-6
-    environment:
-      - NODE_ID=6
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.16
-    ports:
-      - "8338:8333"
-    command: python run_node.py --node-id 6 --port 8333 --peers node2:8333,node5:8333,node7:8333
-
-  node7:
-    build: .
-    container_name: bitcoin-node-7
-    environment:
-      - NODE_ID=7
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.17
-    ports:
-      - "8339:8333"
-    command: python run_node.py --node-id 7 --port 8333 --peers node2:8333,node6:8333,node8:8333
-
-  node8:
-    build: .
-    container_name: bitcoin-node-8
-    environment:
-      - NODE_ID=8
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.18
-    ports:
-      - "8340:8333"
-    command: python run_node.py --node-id 8 --port 8333 --peers node3:8333,node7:8333,node9:8333
-
-  node9:
-    build: .
-    container_name: bitcoin-node-9
-    environment:
-      - NODE_ID=9
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.19
-    ports:
-      - "8341:8333"
-    command: python run_node.py --node-id 9 --port 8333 --peers node3:8333,node8:8333,node10:8333
-
-  node10:
-    build: .
-    container_name: bitcoin-node-10
-    environment:
-      - NODE_ID=10
-      - NODE_PORT=8333
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.20
-    ports:
-      - "8342:8333"
-    command: python run_node.py --node-id 10 --port 8333 --peers node4:8333,node9:8333
-
-  visualization:
-    build: .
-    container_name: bitcoin-visualization
-    environment:
-      - VISUALIZATION_PORT=8080
-      - TEST_MODE=1
-      - NODE_COUNT=10
-    networks:
-      bitcoin-network:
-        ipv4_address: 192.168.200.100
-    ports:
-      - "8087:8080"
-    command: python visualization_server.py
+      - NETWORK_MODE=private
+      - ENABLE_MINING=false
+      - ENABLE_GUI=false
+      - DATA_DIR=/app/data/node2
+      - PEER_SEEDS=node1:18333
+    volumes:
+      - ./data/node2:/app/data/node2
+      - ./config/node2:/app/config:ro
+    command: ["--private-network", "--network"]
     depends_on:
       - node1
+    networks:
+      - cryptogenesis-net
+    restart: unless-stopped
+
+  # Full Node with GUI (for monitoring)
+  node3:
+    build: .
+    container_name: cryptogenesis-node3
+    ports:
+      - "18335:18333"
+    environment:
+      - NODE_ID=3
+      - NETWORK_MODE=private
+      - ENABLE_MINING=false
+      - ENABLE_GUI=false  # Set to true if you want GUI in container
+      - DATA_DIR=/app/data/node3
+      - PEER_SEEDS=node1:18333,node2:18333
+      - DISPLAY=:99
+    volumes:
+      - ./data/node3:/app/data/node3
+      - ./config/node3:/app/config:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    command: ["--private-network"]
+    depends_on:
+      - node1
+      - node2
+    networks:
+      - cryptogenesis-net
+    restart: unless-stopped
+
+  # Optional: VNC Server for GUI access (if GUI is enabled)
+  # Uncomment and use if you want GUI access via web browser
+  # vnc-server:
+  #   image: dorowu/ubuntu-desktop-lxde-vnc
+  #   container_name: cryptogenesis-vnc
+  #   ports:
+  #     - "6080:80"
+  #   environment:
+  #     - RESOLUTION=1280x720
+  #   networks:
+  #     - cryptogenesis-net
+  #   depends_on:
+  #     - node3
 
 networks:
-  bitcoin-network:
+  cryptogenesis-net:
     driver: bridge
     ipam:
       config:
-        - subnet: 192.168.200.0/24
+        - subnet: 172.20.0.0/16
+
+volumes:
+  node1_data:
+    driver: local
+  node2_data:
+    driver: local
+  node3_data:
+    driver: local

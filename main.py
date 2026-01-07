@@ -16,6 +16,7 @@ from typing import Optional
 # Try to import wxPython for GUI
 try:
     import wx
+
     # Suppress wxPython debug messages
     wx.Log.SetLogLevel(wx.LOG_Error)
     WX_AVAILABLE = True
@@ -25,7 +26,7 @@ except ImportError:
 
 from cryptogenesis.events import EventBus
 from cryptogenesis.services import Services, get_services
-from cryptogenesis.ui import GUIController, MainWindow, WX_AVAILABLE as UI_AVAILABLE
+from cryptogenesis.ui import GUIController, MainWindow
 
 # Global variable to hold services for threading
 _global_services = None
@@ -34,7 +35,7 @@ _global_services = None
 def initialize_application(config: SimpleNamespace) -> Optional[Services]:
     """
     Initialize application following proper sequence.
-    
+
     Sequence:
     1. Create event_bus
     2. Create state instances
@@ -44,21 +45,21 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
     6. Create GUI if gui_mode
     7. Create GUIController with services and event_bus
     8. Show window and start event loop
-    
+
     Args:
         config: Configuration object with:
             - gui_mode: bool - Whether to show GUI
             - start_network: bool - Whether to start network on startup
             - start_mining: bool - Whether to start mining on startup
             - private_network: bool - Whether to use private network parameters
-    
+
     Returns:
         Services instance if successful, None if GUI mode (event loop runs)
     """
     # Step 1: Set network mode if private network is enabled
-    if getattr(config, 'private_network', False):
-        from cryptogenesis.network import set_network_mode
-        from cryptogenesis.block import set_genesis_mode, initialize_private_network
+    if getattr(config, "private_network", False):
+        from cryptogenesis.block import initialize_private_network, set_genesis_mode
+        from cryptogenesis.network_core import set_network_mode
 
         set_network_mode("private")
         set_genesis_mode("private")
@@ -73,7 +74,7 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
     _global_services = services
 
     # Initialize private network genesis block after services are created
-    if getattr(config, 'private_network', False):
+    if getattr(config, "private_network", False):
         try:
             initialize_private_network(services.blockchain_service)
         except Exception as e:
@@ -100,6 +101,7 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
         except Exception as e:
             print(f"Error during state initialization: {e}")
             import traceback
+
             traceback.print_exc()
 
     # Start initialization in background thread
@@ -108,15 +110,16 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
 
     # For private network, wait for initialization to complete
     # since we need the genesis block to be loaded before GUI starts
-    if getattr(config, 'private_network', False):
+    if getattr(config, "private_network", False):
         init_thread.join(timeout=5.0)  # Wait up to 5 seconds for initialization
 
     # Step 7: Start background services if enabled
-    if getattr(config, 'start_network', False):
+    if getattr(config, "start_network", False):
+
         def start_network_thread():
             """Start network in background"""
             try:
-                if hasattr(services.network_service, 'start'):
+                if hasattr(services.network_service, "start"):
                     result = services.network_service.start()
                     if result:
                         print("Network started")
@@ -126,10 +129,11 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
                     print("Network service not yet implemented")
             except Exception as e:
                 print(f"Error starting network: {e}")
-        
+
         threading.Thread(target=start_network_thread, daemon=True).start()
-    
-    if getattr(config, 'start_mining', False):
+
+    if getattr(config, "start_mining", False):
+
         def start_mining_thread():
             """Start mining in background"""
             try:
@@ -140,11 +144,11 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
                     print(f"Mining start failed: {result.error}")
             except Exception as e:
                 print(f"Error starting mining: {e}")
-        
+
         threading.Thread(target=start_mining_thread, daemon=True).start()
-    
+
     # Step 8: Create GUI if gui_mode
-    if getattr(config, 'gui_mode', False):
+    if getattr(config, "gui_mode", False):
         if not UI_AVAILABLE:
             print("ERROR: GUI requested but wxPython not available")
             print("Install with: pip install wxPython")
@@ -158,11 +162,7 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
         main_window = MainWindow(None)
 
         # Create GUIController with services and event_bus
-        controller = GUIController(
-            main_window=main_window,
-            services=services,
-            event_bus=event_bus
-        )
+        controller = GUIController(main_window=main_window, services=services, event_bus=event_bus)
 
         # Set controller reference in window
         main_window.set_controller(controller)
@@ -179,7 +179,7 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
 
         # Cleanup after event loop exits
         services.mining_service.stop_mining()
-        if hasattr(services.network_service, 'stop'):
+        if hasattr(services.network_service, "stop"):
             services.network_service.stop()
 
         return None  # GUI mode doesn't return services
@@ -190,37 +190,19 @@ def initialize_application(config: SimpleNamespace) -> Optional[Services]:
 
 def main():
     """Main function"""
-    parser = argparse.ArgumentParser(
-        description="Bitcoin v0.1 Python 3 Implementation"
-    )
+    parser = argparse.ArgumentParser(description="Bitcoin v0.1 Python 3 Implementation")
+    parser.add_argument("--gui", action="store_true", help="Start GUI mode")
+    parser.add_argument("--network", action="store_true", help="Start network on startup")
+    parser.add_argument("--mining", action="store_true", help="Start mining on startup")
+    parser.add_argument("--test", action="store_true", help="Run basic functionality tests")
     parser.add_argument(
-        '--gui',
-        action='store_true',
-        help='Start GUI mode'
+        "--private-network",
+        action="store_true",
+        help="Run with private network parameters (isolated blockchain)",
     )
-    parser.add_argument(
-        '--network',
-        action='store_true',
-        help='Start network on startup'
-    )
-    parser.add_argument(
-        '--mining',
-        action='store_true',
-        help='Start mining on startup'
-    )
-    parser.add_argument(
-        '--test',
-        action='store_true',
-        help='Run basic functionality tests'
-    )
-    parser.add_argument(
-        '--private-network',
-        action='store_true',
-        help='Run with private network parameters (isolated blockchain)'
-    )
-    
+
     args = parser.parse_args()
-    
+
     # Create config object
     config = SimpleNamespace(
         gui_mode=args.gui,
@@ -228,20 +210,21 @@ def main():
         start_mining=args.mining,
         private_network=args.private_network,
     )
-    
+
     # Run tests if requested
     if args.test:
         # Set network mode for testing if private network is requested
         if args.private_network:
-            from cryptogenesis.network import set_network_mode
-            from cryptogenesis.block import set_genesis_mode, initialize_private_network
+            from cryptogenesis.block import initialize_private_network, set_genesis_mode
+            from cryptogenesis.network_core import set_network_mode
+
             set_network_mode("private")
             set_genesis_mode("private")
             # For tests, initialize without blockchain_service since services aren't created
             initialize_private_network()
         run_tests()
         return
-    
+
     # Initialize application
     if config.gui_mode:
         # GUI mode: initialize and run event loop
@@ -264,9 +247,11 @@ def main():
                 def signal_handler(signum, frame):
                     """Handle shutdown signals"""
                     print("\nShutting down...")
-                    if hasattr(services, 'mining_service'):
+                    if hasattr(services, "mining_service"):
                         services.mining_service.stop_mining()
-                    if hasattr(services, 'network_service') and hasattr(services.network_service, 'stop'):
+                    if hasattr(services, "network_service") and hasattr(
+                        services.network_service, "stop"
+                    ):
                         services.network_service.stop()
                     sys.exit(0)
 
@@ -281,15 +266,20 @@ def main():
                     time.sleep(1)
 
                     # Check if mining is still active
-                    if hasattr(services, 'mining_service') and not services.mining_service.is_mining():
+                    if (
+                        hasattr(services, "mining_service")
+                        and not services.mining_service.is_mining()
+                    ):
                         print("Mining stopped, exiting...")
                         break
 
             except KeyboardInterrupt:
                 print("\nInterrupted by user")
-                if hasattr(services, 'mining_service'):
+                if hasattr(services, "mining_service"):
                     services.mining_service.stop_mining()
-                if hasattr(services, 'network_service') and hasattr(services.network_service, 'stop'):
+                if hasattr(services, "network_service") and hasattr(
+                    services.network_service, "stop"
+                ):
                     services.network_service.stop()
                 sys.exit(0)
         else:
@@ -300,27 +290,21 @@ def main():
 def run_tests():
     """Run basic functionality tests"""
     import time
-    from cryptogenesis import (
-        COIN,
-        Block,
-        Key,
-        Script,
-        Transaction,
-        TxIn,
-        TxOut,
-        uint256,
-    )
+
+    from cryptogenesis import COIN, Block, Key, Script, Transaction, TxIn, TxOut
     from cryptogenesis import block as block_module
-    
+    from cryptogenesis import uint256
+
     print("Bitcoin v0.1 Python 3 Implementation")
     print("=" * 50)
-    
+
     # Check genesis block
     print("\nChecking genesis block...")
     print(f"Current genesis block hash: {block_module.HASH_GENESIS_BLOCK.get_hex()}")
 
     # For private network, we expect a different hash
-    from cryptogenesis.network import get_network_mode
+    from cryptogenesis.network_core import get_network_mode
+
     network_mode = get_network_mode()
     print(f"Network mode: {network_mode}")
 
@@ -334,29 +318,29 @@ def run_tests():
             print("⚠ Private network genesis block hash matches mainnet (unexpected)")
     else:
         print("Using mainnet parameters")
-    
+
     # Skip detailed genesis block info for now (chain not fully initialized in test mode)
-    
+
     # Test transaction creation
     print("\n\nTesting transaction creation...")
     key = Key()
     key.generate_new_key()
     pubkey = key.public_key
     print(f"Generated public key: {pubkey.hex()[:64]}...")
-    
+
     # Create a simple transaction
     tx = Transaction()
     tx.vin = [TxIn()]
     tx.vout = [TxOut(10 * COIN, Script())]
     tx.vout[0].script_pubkey.push_data(pubkey)
     from cryptogenesis.transaction import OP_CHECKSIG
-    
+
     tx.vout[0].script_pubkey.push_opcode(OP_CHECKSIG)
-    
+
     tx_hash = tx.txid
     print(f"Transaction hash: {tx_hash.get_hex()}")
     print(f"Transaction valid: {tx.check_transaction()}")
-    
+
     # Test block creation
     print("\n\nTesting block creation...")
     block = Block()
@@ -371,27 +355,19 @@ def run_tests():
     block_hash = block.get_hash()
     print(f"Block hash: {block_hash.get_hex()}")
     print(f"Block valid: {block.check_block()}")
-    
+
     print("\n" + "=" * 50)
     print("Basic functionality test complete!")
 
 
 def create_genesis_block():
     """Create the genesis block"""
-    from cryptogenesis import (
-        COIN,
-        Block,
-        Script,
-        Transaction,
-        TxIn,
-        TxOut,
-        uint256,
-    )
+    from cryptogenesis import COIN, Block, Script, Transaction, TxIn, TxOut, uint256
     from cryptogenesis.transaction import OP_CHECKSIG
-    
+
     # Genesis block timestamp
     timestamp = b"The Times 03/Jan/2009 Chancellor on brink of " b"second bailout for banks"
-    
+
     tx_new = Transaction()
     tx_new.vin = [TxIn()]
     tx_new.vin[0].prevout.set_null()
@@ -399,7 +375,7 @@ def create_genesis_block():
     tx_new.vin[0].script_sig.push_int(486604799, force_bignum=True)
     tx_new.vin[0].script_sig.push_int(4, force_bignum=True)  # BigNum(4) in original
     tx_new.vin[0].script_sig.push_data(timestamp)
-    
+
     tx_new.vout = [TxOut()]
     tx_new.vout[0].value = 50 * COIN
     tx_new.vout[0].script_pubkey = Script()
@@ -415,7 +391,7 @@ def create_genesis_block():
     )  # Little-endian (after BigNum.getvch() reverse)
     tx_new.vout[0].script_pubkey.push_data(genesis_pubkey_le)
     tx_new.vout[0].script_pubkey.push_opcode(OP_CHECKSIG)
-    
+
     block = Block()
     block.transactions = [tx_new]
     block.prev_block_hash = uint256(0)
@@ -424,7 +400,7 @@ def create_genesis_block():
     block.time = 1231006505  # Genesis block time
     block.bits = 0x1D00FFFF
     block.nonce = 2083236893
-    
+
     return block
 
 
@@ -437,6 +413,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n\nError: {e}")
         import traceback
-        
+
         traceback.print_exc()
         sys.exit(1)

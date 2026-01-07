@@ -17,25 +17,29 @@ pip install ecdsa
 python3 main.py
 ```
 
-## Running Multiple Nodes with Docker
+## Running Locally with Multiple Nodes
 
-Run 10 nodes in a Docker network for testing:
+For detailed instructions on running multiple nodes locally (including Docker setup), see:
 
+- **[RUNNING_LOCALLY.md](RUNNING_LOCALLY.md)** - Complete guide for local multi-node setup
+- **[scripts/](scripts/)** - Helper scripts for network management
+
+### Quick Docker Start
 ```bash
-# Build and start all nodes
-docker-compose up --build
+# Test setup
+./scripts/test-docker-setup.sh
 
-# View logs from a specific node
-docker-compose logs -f node1
+# Start 3-node network (1 mining, 2 relay nodes)
+docker-compose up -d
 
-# Stop all nodes
-docker-compose down
+# Monitor network
+./scripts/monitor-network.sh
 
-# Restart a specific node
-docker-compose restart node1
+# Run integration tests
+./scripts/run-integration-tests.sh
 ```
 
-**Note:** This implementation uses in-memory storage. All blockchain data, transactions, and wallet state are lost when containers stop/restart. Each node starts fresh with the genesis block and syncs from peers.
+**Note:** Uses private network mode with custom parameters - completely isolated from Bitcoin mainnet.
 
 ## Status
 

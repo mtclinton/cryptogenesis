@@ -157,7 +157,7 @@ class BlockchainState:
     def notify_observers(self, event: Event):
         """
         Notify all observers of a state change with an Event object.
-        
+
         Args:
             event: Event object to pass to observers
         """
@@ -169,11 +169,11 @@ class BlockchainState:
             except Exception:
                 # Don't let observer errors break state management
                 pass
-    
+
     def _notify_observers(self, event_type: str, *args):
         """
         Legacy method for backward compatibility.
-        
+
         Notify all observers of a state change (old format).
         New code should use notify_observers(event: Event) instead.
         """

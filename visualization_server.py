@@ -653,7 +653,7 @@ def start_network_node():
     import threading
     import time
 
-    from cryptogenesis.network import Address, connect_node, start_node
+    from cryptogenesis.network_core import Address, connect_node, start_node
 
     print("\nStarting network node for visualization server...")
     success, error = start_node()

@@ -10,6 +10,7 @@ from typing import Optional
 # Try to import wxPython
 try:
     import wx
+
     WX_AVAILABLE = True
 except ImportError:
     wx = None
@@ -20,6 +21,7 @@ if not WX_AVAILABLE:
     # Stub classes if wxPython is not available
     class WalletView:
         pass
+
 else:
 
     class WalletView:
@@ -31,7 +33,7 @@ else:
         def __init__(self, parent):
             """
             Initialize wallet view.
-            
+
             Args:
                 parent: Parent wx.Window
             """
@@ -95,7 +97,7 @@ else:
         def update_balance(self, balance: str):
             """
             Update balance display.
-            
+
             Args:
                 balance: Balance string to display (e.g., "1.23 BTC")
             """
@@ -105,7 +107,7 @@ else:
         def update_address(self, address: str):
             """
             Update address display.
-            
+
             Args:
                 address: Address string to display
             """
@@ -115,5 +117,4 @@ else:
         def get_panel(self):
             """Get the main panel widget"""
             return self.panel
-
 

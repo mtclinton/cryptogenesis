@@ -585,3 +585,4 @@ The system works by:
 - All state is persisted to Berkeley DB
 
 This architecture enables a decentralized, trustless payment system without a central authority.
+

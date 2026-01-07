@@ -11,11 +11,11 @@ from cryptogenesis.block import (
     Block,
     BlockIndex,
     BlockLocator,
-    get_next_work_required,
-    set_genesis_mode,
-    get_genesis_mode,
     create_private_genesis_block,
+    get_genesis_mode,
+    get_next_work_required,
     initialize_private_network,
+    set_genesis_mode,
 )
 from cryptogenesis.chain import BlockChain, get_chain
 from cryptogenesis.crypto import (
@@ -37,7 +37,7 @@ from cryptogenesis.mining import (
     start_mining,
     stop_mining,
 )
-from cryptogenesis.network import (
+from cryptogenesis.network_core import (
     MSG_BLOCK,
     MSG_PRODUCT,
     MSG_REVIEW,
@@ -51,9 +51,9 @@ from cryptogenesis.network import (
     add_address,
     connect_node,
     find_node,
+    get_network_mode,
     relay_inventory,
     set_network_mode,
-    get_network_mode,
     start_node,
     stop_node,
 )

@@ -6,12 +6,13 @@ Separated from controller logic. Contains only UI rendering logic.
 All business logic and user actions are handled by GUIController.
 """
 
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
 # Try to import wxPython
 try:
     import wx
     import wx.adv
+
     WX_AVAILABLE = True
 except ImportError:
     wx = None
@@ -31,6 +32,7 @@ if not WX_AVAILABLE:
     # Stub classes if wxPython is not available
     class MainWindow:
         pass
+
 else:
 
     class MainWindow(wx.Frame):
@@ -38,7 +40,7 @@ else:
         Main application window.
         Composes view components but contains no business logic.
         Controller handles all business logic and event handling.
-        
+
         This class is passive - it only renders UI and delegates all
         user actions to the controller. Views are updated by the controller,
         not directly by this class.
@@ -47,47 +49,47 @@ else:
         def __init__(self, parent, controller: Optional["GUIController"] = None):
             """
             Initialize main window.
-            
+
             Args:
                 parent: Parent wx.Window (usually None for top-level window)
                 controller: Optional GUIController instance (can be set later)
             """
             super().__init__(parent, title="Bitcoin", size=(900, 700))
-            
+
             # Controller reference (set by controller or passed in)
             self.controller: Optional["GUIController"] = controller
-            
+
             # View components
             self.wallet_view: Optional[WalletView] = None
             self.transaction_view: Optional[TransactionView] = None
             self.mining_view: Optional[MiningView] = None
-            
+
             # Menu items (for controller to access)
             self.menu_initialize = None
             self.menu_refresh = None
             self.menu_network = None
             self.menu_generate = None
-            
+
             # Status flags (for UI state only, not business logic)
             self.system_initialized = False
             self.network_running = False
-            
+
             # Create UI (pure rendering, no business logic)
             self._create_menu_bar()
             self._create_toolbar()
             self._create_main_panel()
-            
+
             # Status bar
             self.CreateStatusBar()
-            
+
             # Close event - delegate to controller if available
             self.Bind(wx.EVT_CLOSE, self._on_close)
-        
+
         def set_controller(self, controller: "GUIController"):
             """
             Set the controller for this window.
             Called after window creation if controller wasn't passed in __init__.
-            
+
             Args:
                 controller: GUIController instance
             """
@@ -96,7 +98,7 @@ else:
         def _create_menu_bar(self):
             """
             Create menu bar.
-            
+
             Pure UI rendering - no business logic.
             Menu items are created but handlers are bound by controller.
             """
@@ -134,7 +136,7 @@ else:
         def _create_toolbar(self):
             """
             Create toolbar.
-            
+
             Pure UI rendering - no business logic.
             Tool buttons are created but handlers are bound by controller.
             """
@@ -157,7 +159,7 @@ else:
             )
 
             toolbar.Realize()
-            
+
             # Store tool IDs for controller
             self.send_tool_id = send_tool.GetId()
             self.addr_tool_id = addr_tool.GetId()
@@ -165,7 +167,7 @@ else:
         def _create_main_panel(self):
             """
             Create main panel with view components.
-            
+
             Pure UI rendering - no business logic.
             Views are created but updated by controller.
             """
@@ -200,7 +202,7 @@ else:
         def set_status_text(self, text: str):
             """
             Update status bar text.
-            
+
             Args:
                 text: Status text to display
             """
@@ -223,7 +225,7 @@ else:
             """
             Bind menu event handler.
             Controller uses this to attach handlers.
-            
+
             Args:
                 menu_id: Menu item ID
                 handler: Event handler function
@@ -234,11 +236,9 @@ else:
             """
             Bind toolbar event handler.
             Controller uses this to attach handlers.
-            
+
             Args:
                 tool_id: Tool item ID
                 handler: Event handler function
             """
             self.Bind(wx.EVT_TOOL, handler, id=tool_id)
-
-
