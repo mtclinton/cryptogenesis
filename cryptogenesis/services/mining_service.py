@@ -123,30 +123,12 @@ class MiningService:
         """
         Mining worker function that runs in background thread.
 
-        Uses different miner based on network mode:
-        - Private network: bitcoin_miner_private_network (uses services directly)
-        - Mainnet: bitcoin_miner (uses legacy chain.process_block)
-
         Args:
             node_id: Optional node ID for deterministic key generation
         """
         try:
-            from cryptogenesis.network import get_network_mode
-
             print("Mining worker thread started")
-
-            if get_network_mode() == "private":
-                # For private network, use the refactored miner that uses services
-                from cryptogenesis.mining import bitcoin_miner_private_network
-                bitcoin_miner_private_network(
-                    node_id=node_id,
-                    blockchain_service=self.blockchain_service,
-                    event_bus=self.event_bus
-                )
-            else:
-                # For mainnet, use the original bitcoin_miner (to be refactored later)
-                bitcoin_miner(node_id=node_id)
-
+            bitcoin_miner(node_id=node_id)
             print("Mining worker thread finished")
         except Exception as e:
             # Log error but don't crash the service
