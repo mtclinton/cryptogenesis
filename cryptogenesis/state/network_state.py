@@ -8,19 +8,8 @@ Uses Event system for state change notifications.
 import threading
 from typing import List, Optional, TYPE_CHECKING
 
-# Import Address and Node from main network module file (not package to avoid circular import)
-import importlib.util
-import os
-import sys
-
-network_file_path = os.path.join(os.path.dirname(__file__), '..', 'network.py')
-network_file_path = os.path.abspath(network_file_path)
-spec = importlib.util.spec_from_file_location("network_module", network_file_path)
-network_module = importlib.util.module_from_spec(spec)
-sys.modules['network_module'] = network_module
-spec.loader.exec_module(network_module)
-Address = network_module.Address
-Node = network_module.Node
+# Engine types now live inside the network package (no importlib needed).
+from cryptogenesis.network.protocol import Address, Node
 
 if TYPE_CHECKING:
     from cryptogenesis.events import EventBus, NetworkPeerConnectedEvent, NetworkPeerDisconnectedEvent

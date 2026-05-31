@@ -4,31 +4,16 @@ Event Type Definitions
 Base event class and event type definitions.
 """
 
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional
 
 from cryptogenesis.block import Block
 from cryptogenesis.transaction import Transaction
 from cryptogenesis.util import get_time
 
-# Import Node from the network module file (not package) to avoid circular import
-if TYPE_CHECKING:
-    from cryptogenesis.network import Node
-else:
-    # Import directly from the .py file using importlib to avoid package import
-    import importlib.util
-    import sys
-    import os
-    
-    # Get the path to network.py (not the package)
-    network_file_path = os.path.join(os.path.dirname(__file__), '..', 'network.py')
-    network_file_path = os.path.abspath(network_file_path)
-    
-    spec = importlib.util.spec_from_file_location("network_module", network_file_path)
-    network_module = importlib.util.module_from_spec(spec)
-    sys.modules['network_module'] = network_module
-    spec.loader.exec_module(network_module)
-    
-    Node = network_module.Node
+# The engine now lives inside the package; import Node directly (no importlib,
+# no separate module object). protocol.py does not import events, so this is
+# cycle-free.
+from cryptogenesis.network.protocol import Node
 
 
 class Event:
