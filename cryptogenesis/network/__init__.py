@@ -26,9 +26,7 @@ from cryptogenesis.network.protocol import (
     add_address,
     connect_node,
     find_node,
-    get_network_mode,
     relay_inventory,
-    set_network_mode,
     start_node,
     stop_node,
 )
@@ -49,9 +47,7 @@ __all__ = [
     "add_address",
     "connect_node",
     "find_node",
-    "get_network_mode",
     "relay_inventory",
-    "set_network_mode",
     "start_node",
     "stop_node",
 ]

@@ -21,40 +21,6 @@ MESSAGE_START = bytes([0xF9, 0xBE, 0xB4, 0xD9])
 # Default port - mainnet default
 DEFAULT_PORT = 8333
 
-# Global network mode flag
-_network_mode = "mainnet"
-
-def set_network_mode(mode: str):
-    """
-    Set the network mode and update constants accordingly.
-
-    Args:
-        mode: Network mode ("mainnet" or "private")
-    """
-    # Mutate THIS module's globals. (The previous version mutated the package
-    # object instead of the engine module, so private params silently never
-    # took effect. Private mode is being retired, but keep this correct.)
-    global _network_mode, MESSAGE_START, DEFAULT_PORT
-    _network_mode = mode
-
-    if mode == "private":
-        try:
-            from cryptogenesis.config_private import MESSAGE_START as PRIVATE_MESSAGE_START
-            from cryptogenesis.config_private import DEFAULT_PORT as PRIVATE_DEFAULT_PORT
-            MESSAGE_START = PRIVATE_MESSAGE_START
-            DEFAULT_PORT = PRIVATE_DEFAULT_PORT
-            print(f"Switched to private network mode (port {DEFAULT_PORT})")
-        except ImportError:
-            print("Warning: Private network config not found, using mainnet parameters")
-    else:
-        # Reset to mainnet defaults
-        MESSAGE_START = bytes([0xF9, 0xBE, 0xB4, 0xD9])
-        DEFAULT_PORT = 8333
-        print("Using mainnet network parameters")
-
-def get_network_mode() -> str:
-    """Get current network mode"""
-    return _network_mode
 
 # Node services
 NODE_NETWORK = 1 << 0
