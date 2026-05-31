@@ -70,7 +70,8 @@ def get_services(event_bus: Optional[EventBus] = None) -> Services:
     blockchain_state = BlockchainState()
     wallet_state = WalletState()
     mempool_state = MempoolState()
-    network_state = NetworkState()
+    # NetworkState publishes NetworkPeer*Event when given the event_bus.
+    network_state = NetworkState(event_bus=event_bus)
     
     # Step 2: Create service dependencies in order
     # BlockchainService has no service dependencies, only state
@@ -100,8 +101,14 @@ def get_services(event_bus: Optional[EventBus] = None) -> Services:
         event_bus=event_bus
     )
     
-    # NetworkService (currently a skeleton, no dependencies yet)
-    network_service = NetworkService()
+    # NetworkService: lifecycle facade over the P2P engine, bridging peer
+    # connect/disconnect into NetworkState + the EventBus.
+    network_service = NetworkService(
+        event_bus=event_bus,
+        blockchain_service=blockchain_service,
+        mempool_service=mempool_service,
+        network_state=network_state,
+    )
     
     # Step 3: Return Services container
     return Services(

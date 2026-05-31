@@ -275,6 +275,42 @@ addresses: Dict[bytes, Address] = {}
 addresses_lock = threading.Lock()
 f_shutdown = False
 
+# Serializes block/chain/mempool mutation across the miner and message-handler
+# threads -- the cs_main of bitcoin v0.1. Re-entrant so a handler may call into
+# helpers that also take it. ALWAYS acquire it AFTER releasing node.recv_lock.
+cs_main = threading.RLock()
+
+# One-shot guard: ask a single peer for the block chain per process (v0.1).
+f_asked_for_blocks = False
+
+# Optional hooks the service layer installs to observe peer connect/disconnect.
+# Keeps the engine free of any hard EventBus/state dependency.
+_on_node_connected = None
+_on_node_disconnected = None
+
+
+def set_node_callbacks(on_connected=None, on_disconnected=None):
+    """Install callbacks invoked when a peer is added/removed (service layer)."""
+    global _on_node_connected, _on_node_disconnected
+    _on_node_connected = on_connected
+    _on_node_disconnected = on_disconnected
+
+
+def _notify_node_connected(node: "Node"):
+    if _on_node_connected:
+        try:
+            _on_node_connected(node)
+        except Exception as e:
+            print(f"node-connected callback error: {e}")
+
+
+def _notify_node_disconnected(node: "Node"):
+    if _on_node_disconnected:
+        try:
+            _on_node_disconnected(node)
+        except Exception as e:
+            print(f"node-disconnected callback error: {e}")
+
 
 def check_for_shutdown(thread_id: int = -1) -> bool:
     """
@@ -329,13 +365,19 @@ class Node:
         # Subscription
         self.subscribe: List[bool] = [False] * 256
 
-        # Push version message
+        # Push version message. Build it explicitly with the field widths the
+        # receiver expects (version=int32, services=uint64, time=int64, addr):
+        # push_message serializes every int as uint64, which mis-sized the
+        # version field and corrupted services/time on the wire.
         from cryptogenesis.util import get_adjusted_time
 
         n_time = get_adjusted_time()
-        if not inbound:
-            n_time = get_adjusted_time()
-        self.push_message("version", self.VERSION, n_local_services, n_time, addr)
+        self.begin_message("version")
+        self.v_send.write(struct.pack("<i", self.VERSION))
+        self.v_send.write(struct.pack("<Q", n_local_services))
+        self.v_send.write(struct.pack("<q", n_time))
+        addr.serialize(self.v_send, SER_NETWORK, self.VERSION)
+        self.end_message()
 
     def add_ref(self, timeout: int = 0):
         """Add reference to node"""
@@ -490,6 +532,7 @@ def connect_node(addr: Address, timeout: int = 0) -> Optional[Node]:
             pnode.add_ref()
         with nodes_lock:
             nodes.append(pnode)
+        _notify_node_connected(pnode)
         with addresses_lock:
             if addr.get_key() in addresses:
                 addresses[addr.get_key()].last_failed = 0
@@ -580,6 +623,7 @@ def thread_socket_handler(listen_sock: socket.socket):
                 ):
                     nodes.remove(node)
                     node.disconnect_node()
+                    _notify_node_disconnected(node)
                     from cryptogenesis.util import get_adjusted_time
 
                     node.release_time = max(node.release_time, get_adjusted_time() + 5 * 60)
@@ -644,6 +688,7 @@ def thread_socket_handler(listen_sock: socket.socket):
                     node.add_ref()
                     with nodes_lock:
                         nodes.append(node)
+                    _notify_node_connected(node)
                 except socket.error as e:
                     # More detailed error reporting (matches Bitcoin v0.1)
                     errno = getattr(e, "errno", None)
@@ -720,6 +765,10 @@ def thread_socket_handler(listen_sock: socket.socket):
             time.sleep(0.1)
 
         time.sleep(0.01)
+
+    # Clear our running flag on exit so stop_node() does not hang waiting on it
+    # (the `while not f_shutdown` condition exits before check_for_shutdown(0)).
+    threads_running[0] = False
 
 
 def thread_open_connections():
@@ -809,66 +858,80 @@ def thread_open_connections():
         if not success:
             time.sleep(2)
 
+    threads_running[1] = False
+
 
 def process_messages(node: Node):
-    """Process messages from a node"""
+    """Frame and process messages from a node.
+
+    The ENTIRE framing loop runs under node.recv_lock -- the same lock the
+    socket thread holds while extend()-ing node.v_recv.vch -- so the two
+    threads can no longer race on the receive buffer (the old code released
+    the lock after an emptiness check and then mutated the buffer unlocked,
+    silently dropping concurrently-appended bytes). Decoded messages are
+    dispatched AFTER recv_lock is released, each under cs_main, so chain and
+    mempool mutation is serialized against the miner and other peers.
+    """
+    decoded = []
     with node.recv_lock:
         v_recv = node.v_recv
         if len(v_recv.vch) == 0:
             return True
 
-    # Find message start
-    while True:
-        # Search for message start
-        start_pos = -1
-        for i in range(len(v_recv.vch) - 3):
-            if bytes(v_recv.vch[i : i + 4]) == MESSAGE_START:
-                start_pos = i
+        while True:
+            # Search for message start
+            start_pos = -1
+            for i in range(len(v_recv.vch) - 3):
+                if bytes(v_recv.vch[i : i + 4]) == MESSAGE_START:
+                    start_pos = i
+                    break
+
+            if start_pos == -1:
+                # No message start found
+                if len(v_recv.vch) > 20:
+                    print("\n\nPROCESSMESSAGE MESSAGESTART NOT FOUND\n\n")
+                    v_recv.vch = v_recv.vch[-20:]
                 break
 
-        if start_pos == -1:
-            # No message start found
-            if len(v_recv.vch) > 20:
-                print("\n\nPROCESSMESSAGE MESSAGESTART NOT FOUND\n\n")
-                v_recv.vch = v_recv.vch[-20:]
-            break
+            if start_pos > 0:
+                print(f"\n\nPROCESSMESSAGE SKIPPED {start_pos} BYTES\n\n")
+                v_recv.vch = v_recv.vch[start_pos:]
 
-        if start_pos > 0:
-            print(f"\n\nPROCESSMESSAGE SKIPPED {start_pos} BYTES\n\n")
-            v_recv.vch = v_recv.vch[start_pos:]
+            # Read header
+            if len(v_recv.vch) < 20:
+                break
 
-        # Read header
-        if len(v_recv.vch) < 20:
-            break
+            header = MessageHeader()
+            header_stream = DataStream()
+            header_stream.vch = bytearray(v_recv.vch[:20])
+            header.unserialize(header_stream)
 
-        header = MessageHeader()
-        header_stream = DataStream()
-        header_stream.vch = bytearray(v_recv.vch[:20])
-        header.unserialize(header_stream)
+            if not header.is_valid():
+                print(f"\n\nPROCESSMESSAGE: ERRORS IN HEADER {header.get_command()}\n\n\n")
+                v_recv.vch = v_recv.vch[1:]  # Skip one byte and try again
+                continue
 
-        if not header.is_valid():
-            print(f"\n\nPROCESSMESSAGE: ERRORS IN HEADER {header.get_command()}\n\n\n")
-            v_recv.vch = v_recv.vch[1:]  # Skip one byte and try again
-            continue
+            command = header.get_command()
+            message_size = header.message_size
 
-        command = header.get_command()
-        message_size = header.message_size
+            if message_size > len(v_recv.vch) - 20:
+                # Need more data
+                break
 
-        if message_size > len(v_recv.vch) - 20:
-            # Need more data
-            break
+            # Copy message to its own buffer and advance past it
+            message_data = bytes(v_recv.vch[20 : 20 + message_size])
+            v_recv.vch = v_recv.vch[20 + message_size :]
+            decoded.append((command, message_data))
 
-        # Copy message to its own buffer
-        message_data = bytes(v_recv.vch[20 : 20 + message_size])
-        v_recv.vch = v_recv.vch[20 + message_size :]
+        v_recv.compact()
 
-        # Process message
+    # Dispatch outside recv_lock; cs_main serializes against the miner.
+    for command, message_data in decoded:
         try:
-            process_message(node, command, message_data)
+            with cs_main:
+                process_message(node, command, message_data)
         except Exception as e:
-            print(f"ProcessMessage({command}, {message_size} bytes) FAILED: {e}")
-
-    v_recv.compact()
+            print(f"ProcessMessage({command}, {len(message_data)} bytes) FAILED: {e}")
     return True
 
 
@@ -909,6 +972,20 @@ def process_message(node: Node, command: str, message_data: bytes):
 
         print(f"version addrMe = {addr_me}")
 
+        # Ask one peer for the block chain (one-shot, like bitcoin v0.1's
+        # AskForBlocks). Without this, a fresh node never requests blocks and
+        # initial sync silently never happens. Only ask full nodes.
+        global f_asked_for_blocks
+        if not f_asked_for_blocks and not node.is_client:
+            f_asked_for_blocks = True
+            from cryptogenesis.block import BlockLocator
+            from cryptogenesis.chain import get_chain
+
+            node.push_message(
+                "getblocks", BlockLocator(get_chain().get_best_index()), uint256(0)
+            )
+            print("asked for block chain (getblocks)")
+
     elif node.version == 0:
         # Must have a version message before anything else
         return False
@@ -920,6 +997,9 @@ def process_message(node: Node, command: str, message_data: bytes):
         stream.n_read_pos = stream.n_read_pos + (
             1 if size < 253 else (3 if size <= 0xFFFF else (5 if size <= 0xFFFFFFFF else 9))
         )
+        # Bound an attacker-controlled count to what the buffer can hold
+        # (a serialized Address is >= 26 bytes), and to a sane maximum.
+        size = min(size, 50000, max(0, len(stream.vch) - stream.n_read_pos) // 26)
         v_addr = []
         for _ in range(size):
             addr = Address()
@@ -944,6 +1024,8 @@ def process_message(node: Node, command: str, message_data: bytes):
         stream.n_read_pos = stream.n_read_pos + (
             1 if size < 253 else (3 if size <= 0xFFFF else (5 if size <= 0xFFFFFFFF else 9))
         )
+        # Bound an attacker-controlled count (a serialized Inv is 36 bytes).
+        size = min(size, 50000, max(0, len(stream.vch) - stream.n_read_pos) // 36)
         v_inv = []
         for _ in range(size):
             inv = Inv()
@@ -969,6 +1051,8 @@ def process_message(node: Node, command: str, message_data: bytes):
         stream.n_read_pos = stream.n_read_pos + (
             1 if size < 253 else (3 if size <= 0xFFFF else (5 if size <= 0xFFFFFFFF else 9))
         )
+        # Bound an attacker-controlled count (a serialized Inv is 36 bytes).
+        size = min(size, 50000, max(0, len(stream.vch) - stream.n_read_pos) // 36)
         v_inv = []
         for _ in range(size):
             inv = Inv()
@@ -1216,6 +1300,8 @@ def thread_message_handler():
 
         time.sleep(0.1)
 
+    threads_running[2] = False
+
 
 def start_node() -> Tuple[bool, str]:
     """Start the network node"""
@@ -1279,11 +1365,6 @@ def start_node() -> Tuple[bool, str]:
         message_thread = threading.Thread(target=thread_message_handler, daemon=True)
         message_thread.start()
         threads_running[2] = True
-
-        # Start IRC peer discovery (optional)
-        irc_thread = threading.Thread(target=thread_irc_seed, daemon=True)
-        irc_thread.start()
-        threads_running[3] = True
     except Exception as e:
         error = f"Error: Failed to start threads: {e}"
         print(error)
@@ -1299,8 +1380,10 @@ def stop_node():
     print("StopNode()")
     f_shutdown = True
 
-    # Wait for threads to stop
-    while any(threads_running):
+    # Wait (bounded) for the daemon threads to fall out of their loops and clear
+    # their running flags. Bounded so shutdown can never hang.
+    deadline = time.time() + 2.0
+    while any(threads_running) and time.time() < deadline:
         time.sleep(0.01)
     time.sleep(0.05)
 
@@ -1319,160 +1402,3 @@ def stop_node():
         nodes.clear()
 
     return True
-
-
-# IRC Peer Discovery (optional)
-def encode_address_base58(addr: Address) -> str:
-    """Encode address in base58 for IRC"""
-    # Simplified base58 encoding - in production use proper base58
-    import base64
-
-    data = struct.pack(">I", addr.ip) + struct.pack(">H", addr.port)
-    encoded = base64.b64encode(data).decode("ascii").rstrip("=")
-    return f"u{encoded}"
-
-
-def decode_address_base58(encoded: str) -> Optional[Address]:
-    """Decode address from base58 IRC format"""
-    if not encoded.startswith("u"):
-        return None
-    try:
-        import base64
-
-        # Add padding if needed
-        encoded_b64 = encoded[1:] + "=="
-        data = base64.b64decode(encoded_b64)
-        if len(data) != 6:
-            return None
-        ip = struct.unpack(">I", data[:4])[0]
-        port = struct.unpack(">H", data[4:6])[0]
-        return Address(ip, port)
-    except Exception:
-        return None
-
-
-def recv_line_irc(sock: socket.socket) -> Optional[str]:
-    """Receive a line from IRC socket"""
-    try:
-        data = sock.recv(1)
-        if not data:
-            return None
-        line = b""
-        while data:
-            if data == b"\n":
-                continue
-            if data == b"\r":
-                return line.decode("utf-8", errors="ignore")
-            line += data
-            data = sock.recv(1)
-        return line.decode("utf-8", errors="ignore") if line else None
-    except Exception:
-        return None
-
-
-def thread_irc_seed():
-    """IRC peer discovery thread"""
-    print("ThreadIRCSeed started")
-    while not f_shutdown:
-        try:
-            # Connect to IRC
-            irc_host = "chat.freenode.net"
-            irc_port = 6667
-
-            try:
-                irc_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                irc_sock.settimeout(30)
-                irc_sock.connect((irc_host, irc_port))
-                irc_sock.settimeout(None)
-            except Exception as e:
-                print(f"IRC connect failed: {e}")
-                time.sleep(60)
-                continue
-
-            # Wait for initial messages
-            line = recv_line_irc(irc_sock)
-            while line and not any(
-                x in line
-                for x in [
-                    "Found your hostname",
-                    "using your IP address instead",
-                    "Couldn't look up your hostname",
-                ]
-            ):
-                line = recv_line_irc(irc_sock)
-
-            if not line:
-                irc_sock.close()
-                continue
-
-            # Generate nickname
-            if addr_local_host and addr_local_host.is_routable():
-                str_my_name = encode_address_base58(addr_local_host)
-            else:
-                import random
-
-                str_my_name = f"x{random.randint(0, 1000000000)}"
-
-            # Send NICK and USER
-            irc_sock.send(f"NICK {str_my_name}\r\n".encode())
-            irc_sock.send(f"USER {str_my_name} 8 * : {str_my_name}\r\n".encode())
-
-            # Wait for 004 (registration complete)
-            line = recv_line_irc(irc_sock)
-            while line and " 004 " not in line:
-                line = recv_line_irc(irc_sock)
-
-            if not line:
-                irc_sock.close()
-                continue
-
-            time.sleep(0.5)
-
-            # Join channel and get user list
-            irc_sock.send("JOIN #bitcoin\r\n".encode())
-            irc_sock.send("WHO #bitcoin\r\n".encode())
-
-            # Process messages
-            while not f_shutdown:
-                line = recv_line_irc(irc_sock)
-                if not line:
-                    break
-
-                if not line or line[0] != ":":
-                    continue
-
-                print(f"IRC {line}")
-
-                words = line.split()
-                if len(words) < 2:
-                    continue
-
-                name = ""
-
-                # Handle WHO response (352)
-                if words[1] == "352" and len(words) >= 8:
-                    name = words[7][:16]  # Limited to 16 chars
-                    print(f"GOT WHO: [{name}]  ", end="")
-
-                # Handle JOIN
-                if words[1] == "JOIN":
-                    name = words[0][1:]  # Remove leading :
-                    if "!" in name:
-                        name = name.split("!")[0]
-                    print(f"GOT JOIN: [{name}]  ", end="")
-
-                # Decode address if it starts with 'u'
-                if name.startswith("u"):
-                    addr = decode_address_base58(name)
-                    if addr:
-                        if add_address(addr):
-                            print("new  ", end="")
-                        print(addr)
-                    else:
-                        print("decode failed")
-
-            irc_sock.close()
-
-        except Exception as e:
-            print(f"IRC thread error: {e}")
-            time.sleep(60)
