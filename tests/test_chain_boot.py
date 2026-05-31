@@ -34,6 +34,31 @@ def test_accept_genesis_sets_best_tip():
     assert chain.get_best_hash().get_hex() == MAINNET_GENESIS_HASH
 
 
+def test_block_locator_terminates():
+    # BlockLocator.set used to infinite-loop walking back to genesis (it left
+    # `current` pinned at the genesis index instead of letting it become None),
+    # which hung the P2P message-handler thread the moment a getblocks was built
+    # -- the root cause of multi-node sync never working. Guard with a watchdog
+    # so a regression fails instead of freezing the suite.
+    import threading
+
+    from cryptogenesis.block import HASH_GENESIS_BLOCK, BlockLocator
+
+    chain = BlockChain()
+    chain.accept_block(_genesis())
+
+    result = {}
+
+    def build():
+        result["have"] = BlockLocator(chain.get_best_index()).have
+
+    t = threading.Thread(target=build, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    assert not t.is_alive(), "BlockLocator.set did not terminate (infinite-loop regression)"
+    assert HASH_GENESIS_BLOCK in result["have"]
+
+
 def test_block_index_supports_prev_walk_for_api():
     # /api/blockchain walks best_index + .prev + .height + get_block(); pin that
     # contract so the read source can later move to BlockchainState's linked index.

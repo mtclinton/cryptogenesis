@@ -53,11 +53,19 @@ class NetworkService:
         protocol.set_node_callbacks(None, None)
         return ServiceResult(success=True)
 
-    def connect_peer(self, addr, timeout: int = 5) -> ServiceResult:
-        """Open an outbound connection to a peer Address."""
+    def connect_peer(self, addr) -> ServiceResult:
+        """Open a PERSISTENT outbound connection to a peer Address.
+
+        connect_node's `timeout` is a ref-RELEASE timer, not a connect timeout
+        (the socket connect timeout is handled inside connect_socket). A non-zero
+        value left ref_count=0 with only a ~5s release window, so peers were
+        disconnected a few seconds after the handshake and the teardown cascaded
+        across the mesh. timeout=0 -> add_ref() increments ref_count, keeping the
+        peer pinned so block relay can sustain.
+        """
         from cryptogenesis.network import protocol
 
-        node = protocol.connect_node(addr, timeout=timeout)
+        node = protocol.connect_node(addr)
         if node is None:
             return ServiceResult(success=False, error="Failed to connect to peer")
         return ServiceResult(success=True, data=node)

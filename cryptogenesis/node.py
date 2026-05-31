@@ -76,6 +76,11 @@ def main():
         default="",
         help="Comma-separated list of peers (host:port)",
     )
+    parser.add_argument(
+        "--no-mining",
+        action="store_true",
+        help="Run as a follower: sync from peers but do not mine",
+    )
     args = parser.parse_args()
 
     node_id = args.node_id
@@ -127,7 +132,7 @@ def main():
                 addr = Address(ip_int, port_net, 1)
 
                 print(f"Connecting to {host}:{peer_port} ({ip})...")
-                result = services.network_service.connect_peer(addr, timeout=5)
+                result = services.network_service.connect_peer(addr)
                 if result:
                     print(f"  ✓ Connected to {host}:{peer_port}")
                 else:
@@ -135,10 +140,13 @@ def main():
             except Exception as e:
                 print(f"  ✗ Error connecting to {host}:{peer_port}: {e}")
 
-    # Start mining
-    print("\nStarting mining...")
-    services.mining_service.start_mining(node_id)
-    print("Mining started")
+    # Start mining (unless running as a sync-only follower)
+    if args.no_mining:
+        print("\nMining disabled (follower mode) - syncing from peers only")
+    else:
+        print("\nStarting mining...")
+        services.mining_service.start_mining(node_id)
+        print("Mining started")
 
     # Create periodic transactions - send coins randomly to other nodes
     def create_transactions():
@@ -512,7 +520,42 @@ def main():
 
         class BlockchainAPIHandler(BaseHTTPRequestHandler):
             def do_GET(self):
-                if self.path == "/api/blockchain":
+                if self.path == "/api/peers":
+                    # In-process probe of the running node's real peer state.
+                    try:
+                        from cryptogenesis.network import protocol
+
+                        with protocol.nodes_lock:
+                            peers = [
+                                {
+                                    "addr": str(n.addr),
+                                    "inbound": n.inbound,
+                                    "version": n.version,
+                                    "is_client": n.is_client,
+                                    "ref_count": n.get_ref_count(),
+                                    "disconnect": n.disconnect,
+                                    "recv_bytes": len(n.v_recv.vch),
+                                    "send_bytes": len(n.v_send.vch),
+                                    "inv_to_send": len(n.inventory_to_send),
+                                    "addr_to_send": len(n.addr_to_send),
+                                }
+                                for n in protocol.nodes
+                            ]
+                        data = {
+                            "peer_count": len(peers),
+                            "asked_for_blocks": protocol.f_asked_for_blocks,
+                            "best_height": get_chain().best_height,
+                            "peers": peers,
+                            "timestamp": time.time(),
+                        }
+                        self.send_response(200)
+                        self.send_header("Content-type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps(data).encode())
+                    except Exception as e:
+                        self.send_error(500, str(e))
+                elif self.path == "/api/blockchain":
                     try:
                         chain = get_chain()
                         best_index = chain.get_best_index()

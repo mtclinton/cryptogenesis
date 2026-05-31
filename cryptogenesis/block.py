@@ -283,9 +283,14 @@ class BlockLocator:
         while current:
             self.have.append(current.get_block_hash())
 
-            # Exponentially larger steps back
+            # Step back; current becomes None when we step past genesis, which is
+            # what terminates the outer loop (mirrors CBlockLocator::Set). The old
+            # `if current.prev is None: break` left current pinned at the genesis
+            # index, so `while current` never exited -> infinite loop. This hung
+            # the message-handler thread the moment a getblocks was built, which
+            # is why P2P block propagation never worked.
             for _ in range(step):
-                if current.prev is None:
+                if current is None:
                     break
                 current = current.prev
             if len(self.have) > 10:
