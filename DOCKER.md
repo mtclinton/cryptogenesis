@@ -73,11 +73,11 @@ node1 ──┬── node2 ──┬── node3
 
 **High CPU usage?**
 - All nodes mine simultaneously - this is expected
-- Stop mining on specific nodes by modifying `run_node.py`
+- Stop mining on specific nodes by modifying `cryptogenesis/node.py`
 
 ## Customization
 
-Edit `run_node.py` to:
+Edit `cryptogenesis/node.py` to:
 - Change transaction creation frequency (default: 30 seconds)
 - Modify mining behavior
 - Add custom transaction logic

@@ -14,7 +14,7 @@ Core Bitcoin structures and operations:
 
 ```bash
 pip install ecdsa
-python3 main.py
+python3 -m cryptogenesis.node --node-id 1
 ```
 
 ## Running Multiple Nodes with Docker

@@ -20,8 +20,8 @@ lint:
 	pre-commit run --all-files
 
 format:
-	black cryptogenesis/ tests/ main.py
-	isort cryptogenesis/ tests/ main.py
+	black cryptogenesis/ tests/ visualization_server.py
+	isort cryptogenesis/ tests/ visualization_server.py
 
 clean:
 	find . -type d -name __pycache__ -exec rm -r {} +
@@ -30,4 +30,4 @@ clean:
 	rm -rf build/ dist/
 
 run:
-	python main.py
+	python -m cryptogenesis.node --node-id 1

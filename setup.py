@@ -39,7 +39,7 @@ setup(
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "cryptogenesis=main:main",
+            "cryptogenesis=cryptogenesis.node:main",
         ],
     },
 )
