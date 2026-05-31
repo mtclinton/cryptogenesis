@@ -85,10 +85,8 @@ class BlockchainService:
             event_bus: Optional EventBus instance for publishing events
         """
         self.blockchain_state = blockchain_state
-        self.validator = validator if validator is not None else BlockValidator()
+        self.validator = validator  # retained for compatibility; no longer used
         self.event_bus = event_bus
-        # Get chain for height calculation
-        self.chain = get_chain()
     
     def add_block(self, block: Block) -> ServiceResult:
         """
@@ -104,51 +102,23 @@ class BlockchainService:
             ServiceResult with success status and data/error
         """
         try:
-            # Check if this is a private network block
-            from cryptogenesis.network import get_network_mode
-            is_private_network = get_network_mode() == "private"
-
-            # For private network, skip full validation (genesis block already validated)
-            if not is_private_network:
-                # Validate block using validator
-                is_valid, error_msg = self.validator.validate(block)
-
-                if not is_valid:
-                    return ServiceResult(
-                        success=False,
-                        error=error_msg or "Block validation failed"
-                    )
-            
-            # Get block height
-            block_hash = block.get_hash()
-            if is_private_network:
-                # For private network, calculate height as current + 1
-                current_height = self.blockchain_state.get_best_height()
-                height = current_height + 1
-            else:
-                # Get height from chain for mainnet
-                block_index = self.chain.get_block_index(block_hash)
-                height = block_index.height if block_index else -1
-            
-            # Add to blockchain state
-            if not self.blockchain_state.add_block(block, height=height):
+            # Single write path: the state facade accepts/connects the block on
+            # the one chain engine. (No separate validate -> accept_block step,
+            # which previously double-processed and wrote two stores.)
+            if not self.blockchain_state.add_block(block):
                 return ServiceResult(
                     success=False,
-                    error="Failed to add block to blockchain state (duplicate or error)"
+                    error="Block rejected by chain (invalid, duplicate, or orphan)",
                 )
-            
-            # Publish BlockAddedEvent after successful state update
+
+            # Publish BlockAddedEvent once, from the service layer.
             if self.event_bus:
                 try:
                     self.event_bus.publish(BlockAddedEvent(block))
                 except Exception as e:
-                    # Log error but don't fail the operation
                     print(f"Error publishing BlockAddedEvent: {e}")
-            
-            return ServiceResult(
-                success=True,
-                data=block
-            )
+
+            return ServiceResult(success=True, data=block)
         except Exception as e:
             return ServiceResult(
                 success=False,
@@ -156,16 +126,17 @@ class BlockchainService:
             )
     
     def get_best_height(self) -> int:
-        """
-        Get current best block height.
-        
-        Delegates to blockchain_state.
-        
-        Returns:
-            Current chain height
-        """
+        """Get current best block height. Delegates to blockchain_state."""
         return self.blockchain_state.get_best_height()
-    
+
+    def get_best_hash(self) -> uint256:
+        """Get the best block hash. Delegates to blockchain_state."""
+        return self.blockchain_state.get_best_hash()
+
+    def get_best_index(self):
+        """Get the best BlockIndex (linked, height-aware) for chain walks."""
+        return self.blockchain_state.get_best_index()
+
     def get_block(self, block_hash: uint256) -> Optional[Block]:
         """
         Get block by hash.
