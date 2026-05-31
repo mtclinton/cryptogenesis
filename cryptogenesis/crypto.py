@@ -142,8 +142,11 @@ class Key:
         """Sign a hash"""
         if self._key is None:
             raise ValueError("No private key")
+        # hash_value is already the 32-byte sighash digest; sign it DIRECTLY.
+        # Using .sign() would re-hash with the library's default SHA-1, which is
+        # not Bitcoin-faithful and weakens the effective digest to 160 bits.
         hash_bytes = hash_value.to_bytes()
-        sig = self._key.sign(hash_bytes, sigencode=sigencode_der)
+        sig = self._key.sign_digest(hash_bytes, sigencode=sigencode_der)
         return sig
 
     def verify(self, hash_value: uint256, sig: bytes) -> bool:
@@ -152,7 +155,7 @@ class Key:
             return False
         try:
             hash_bytes = hash_value.to_bytes()
-            self._pubkey.verify(sig, hash_bytes, sigdecode=sigdecode_der)
+            self._pubkey.verify_digest(sig, hash_bytes, sigdecode=sigdecode_der)
             return True
         except BadSignatureError:
             return False
@@ -163,7 +166,7 @@ class Key:
         try:
             key = SigningKey.from_string(privkey, curve=SECP256k1)
             hash_bytes = hash_value.to_bytes()
-            return key.sign(hash_bytes, sigencode=sigencode_der)
+            return key.sign_digest(hash_bytes, sigencode=sigencode_der)
         except Exception:
             return None
 
@@ -174,7 +177,7 @@ class Key:
             if len(pubkey) == 65 and pubkey[0] == 0x04:
                 vk = VerifyingKey.from_string(pubkey[1:], curve=SECP256k1)
                 hash_bytes = hash_value.to_bytes()
-                vk.verify(sig, hash_bytes, sigdecode=sigdecode_der)
+                vk.verify_digest(sig, hash_bytes, sigdecode=sigdecode_der)
                 return True
         except Exception:
             pass

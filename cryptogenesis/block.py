@@ -709,6 +709,64 @@ class Block:
         )
 
 
+# Proof-of-work limit as a compact 'bits' value (mainnet difficulty-1 target).
+POW_LIMIT_BITS = 0x1D00FFFF
+
+
+def compact_to_target(bits: int) -> int:
+    """Decode a compact 'bits' value into a full target as a Python int.
+
+    Mirrors CBigNum::SetCompact for the (always non-negative) difficulty targets.
+    """
+    exponent = (bits >> 24) & 0xFF
+    mantissa = bits & 0x007FFFFF  # ignore the sign bit (never set for targets)
+    if exponent <= 3:
+        return mantissa >> (8 * (3 - exponent))
+    return mantissa << (8 * (exponent - 3))
+
+
+def target_to_compact(target: int) -> int:
+    """Encode a target int back into compact 'bits'. Mirrors CBigNum::GetCompact."""
+    size = (target.bit_length() + 7) // 8
+    if size <= 3:
+        compact = target << (8 * (3 - size))
+    else:
+        compact = target >> (8 * (size - 3))
+    # If the high bit of the 3-byte mantissa is set it would read as negative,
+    # so shift down one byte and bump the exponent (matches GetCompact).
+    if compact & 0x00800000:
+        compact >>= 8
+        size += 1
+    return compact | (size << 24)
+
+
+def calculate_next_work(
+    last_bits: int,
+    actual_timespan: int,
+    target_timespan: int,
+    pow_limit_bits: int = POW_LIMIT_BITS,
+) -> int:
+    """Retarget math: scale the previous target by actual/target timespan,
+    clamped to a 4x adjustment per period and bounded by the PoW limit.
+
+    Mirrors main.cpp GetNextWorkRequired's bnNew *= nActualTimespan;
+    bnNew /= nTargetTimespan; clamp.
+    """
+    # Limit the adjustment step to a factor of 4 in either direction.
+    if actual_timespan < target_timespan // 4:
+        actual_timespan = target_timespan // 4
+    if actual_timespan > target_timespan * 4:
+        actual_timespan = target_timespan * 4
+
+    bn_new = compact_to_target(last_bits) * actual_timespan // target_timespan
+
+    pow_limit = compact_to_target(pow_limit_bits)
+    if bn_new > pow_limit:
+        bn_new = pow_limit
+
+    return target_to_compact(bn_new)
+
+
 def get_next_work_required(index_last: Optional[BlockIndex]) -> int:
     """Calculate next proof of work target"""
     import os
@@ -747,13 +805,7 @@ def get_next_work_required(index_last: Optional[BlockIndex]) -> int:
         else:
             break
 
-    # Limit adjustment step
+    # Retarget: scale the previous target by the observed vs. target timespan
+    # (clamped to 4x), bounded by the proof-of-work limit.
     actual_timespan = index_last.time - index_first.time
-    if actual_timespan < target_timespan // 4:
-        actual_timespan = target_timespan // 4
-    if actual_timespan > target_timespan * 4:
-        actual_timespan = target_timespan * 4
-
-    # Retarget (simplified - would need BigNum for full implementation)
-    # For now, return the same difficulty
-    return index_last.bits
+    return calculate_next_work(index_last.bits, actual_timespan, target_timespan)

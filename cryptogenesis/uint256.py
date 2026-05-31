@@ -89,26 +89,32 @@ class uint256:
         return result
 
     def __lshift__(self, shift):
+        # Mirrors base_uint::operator<<= (Satoshi). Start from a zeroed result
+        # (NOT a copy of the operand) and mask every lane to 32 bits, since
+        # Python ints do not auto-truncate the way C++ uint32 lanes do.
         result = uint256()
-        result.pn = self.pn[:]
+        a = self.pn
         k = shift // 32
         shift = shift % 32
         for i in range(self.WIDTH):
             if i + k + 1 < self.WIDTH and shift != 0:
-                result.pn[i + k + 1] |= self.pn[i] >> (32 - shift)
+                result.pn[i + k + 1] |= (a[i] >> (32 - shift)) & 0xFFFFFFFF
             if i + k < self.WIDTH:
-                result.pn[i + k] |= self.pn[i] << shift
+                result.pn[i + k] |= (a[i] << shift) & 0xFFFFFFFF
         return result
 
     def __rshift__(self, shift):
+        # Mirrors base_uint::operator>>=. The carry term (a[i] << (32 - shift))
+        # must be masked to 32 bits to avoid leaking high bits into the lane.
         result = uint256()
+        a = self.pn
         k = shift // 32
         shift = shift % 32
         for i in range(self.WIDTH):
             if i - k - 1 >= 0 and shift != 0:
-                result.pn[i - k - 1] |= self.pn[i] << (32 - shift)
+                result.pn[i - k - 1] |= (a[i] << (32 - shift)) & 0xFFFFFFFF
             if i - k >= 0:
-                result.pn[i - k] |= self.pn[i] >> shift
+                result.pn[i - k] |= (a[i] >> shift) & 0xFFFFFFFF
         return result
 
     def __add__(self, other):
