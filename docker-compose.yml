@@ -30,7 +30,7 @@ services:
         ipv4_address: 192.168.200.12
     ports:
       - "8334:8333"
-    command: python -m cryptogenesis.node --node-id 2 --port 8333 --peers node1:8333,node3:8333,node6:8333,node7:8333
+    command: python -m cryptogenesis.node --node-id 2 --port 8333 --peers node1:8333,node3:8333,node6:8333,node7:8333 --no-mining
 
   node3:
     build: .
@@ -43,7 +43,7 @@ services:
         ipv4_address: 192.168.200.13
     ports:
       - "8335:8333"
-    command: python -m cryptogenesis.node --node-id 3 --port 8333 --peers node1:8333,node2:8333,node8:8333,node9:8333
+    command: python -m cryptogenesis.node --node-id 3 --port 8333 --peers node1:8333,node2:8333,node8:8333,node9:8333 --no-mining
 
   node4:
     build: .
@@ -56,7 +56,7 @@ services:
         ipv4_address: 192.168.200.14
     ports:
       - "8336:8333"
-    command: python -m cryptogenesis.node --node-id 4 --port 8333 --peers node1:8333,node5:8333,node10:8333
+    command: python -m cryptogenesis.node --node-id 4 --port 8333 --peers node1:8333,node5:8333,node10:8333 --no-mining
 
   node5:
     build: .
@@ -69,7 +69,7 @@ services:
         ipv4_address: 192.168.200.15
     ports:
       - "8337:8333"
-    command: python -m cryptogenesis.node --node-id 5 --port 8333 --peers node1:8333,node4:8333,node6:8333
+    command: python -m cryptogenesis.node --node-id 5 --port 8333 --peers node1:8333,node4:8333,node6:8333 --no-mining
 
   node6:
     build: .
@@ -82,7 +82,7 @@ services:
         ipv4_address: 192.168.200.16
     ports:
       - "8338:8333"
-    command: python -m cryptogenesis.node --node-id 6 --port 8333 --peers node2:8333,node5:8333,node7:8333
+    command: python -m cryptogenesis.node --node-id 6 --port 8333 --peers node2:8333,node5:8333,node7:8333 --no-mining
 
   node7:
     build: .
@@ -95,7 +95,7 @@ services:
         ipv4_address: 192.168.200.17
     ports:
       - "8339:8333"
-    command: python -m cryptogenesis.node --node-id 7 --port 8333 --peers node2:8333,node6:8333,node8:8333
+    command: python -m cryptogenesis.node --node-id 7 --port 8333 --peers node2:8333,node6:8333,node8:8333 --no-mining
 
   node8:
     build: .
@@ -108,7 +108,7 @@ services:
         ipv4_address: 192.168.200.18
     ports:
       - "8340:8333"
-    command: python -m cryptogenesis.node --node-id 8 --port 8333 --peers node3:8333,node7:8333,node9:8333
+    command: python -m cryptogenesis.node --node-id 8 --port 8333 --peers node3:8333,node7:8333,node9:8333 --no-mining
 
   node9:
     build: .
@@ -121,7 +121,7 @@ services:
         ipv4_address: 192.168.200.19
     ports:
       - "8341:8333"
-    command: python -m cryptogenesis.node --node-id 9 --port 8333 --peers node3:8333,node8:8333,node10:8333
+    command: python -m cryptogenesis.node --node-id 9 --port 8333 --peers node3:8333,node8:8333,node10:8333 --no-mining
 
   node10:
     build: .
@@ -134,7 +134,7 @@ services:
         ipv4_address: 192.168.200.20
     ports:
       - "8342:8333"
-    command: python -m cryptogenesis.node --node-id 10 --port 8333 --peers node4:8333,node9:8333
+    command: python -m cryptogenesis.node --node-id 10 --port 8333 --peers node4:8333,node9:8333 --no-mining
 
   visualization:
     build: .
