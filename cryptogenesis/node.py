@@ -19,52 +19,13 @@ from typing import List
 os.environ["PYTHONUNBUFFERED"] = "1"  # noqa: E402
 
 from cryptogenesis.chain import get_chain  # noqa: E402
-from cryptogenesis.mining import start_mining, stop_mining  # noqa: E402
-from cryptogenesis.network import Address, connect_node, start_node, stop_node  # noqa: E402
+from cryptogenesis.events import EventBus  # noqa: E402
+from cryptogenesis.genesis import create_genesis_block  # noqa: E402
+from cryptogenesis.network import Address  # noqa: E402
+from cryptogenesis.network import protocol  # noqa: E402
+from cryptogenesis.services import get_services  # noqa: E402
 from cryptogenesis.transaction import COIN, Script, Transaction, TxIn, TxOut  # noqa: E402
 from cryptogenesis.wallet import add_key  # noqa: E402
-
-
-def create_genesis_block():
-    """Create the genesis block (matches main.py)"""
-    from cryptogenesis.block import Block
-    from cryptogenesis.transaction import OP_CHECKSIG
-    from cryptogenesis.uint256 import uint256
-
-    # Genesis block timestamp
-    timestamp = b"The Times 03/Jan/2009 Chancellor on brink of " b"second bailout for banks"
-
-    tx_new = Transaction()
-    tx_new.vin = [TxIn()]
-    tx_new.vin[0].prevout.set_null()
-    tx_new.vin[0].script_sig = Script()
-    tx_new.vin[0].script_sig.push_int(486604799, force_bignum=True)
-    tx_new.vin[0].script_sig.push_int(4, force_bignum=True)
-    tx_new.vin[0].script_sig.push_data(timestamp)
-
-    tx_new.vout = [TxOut()]
-    tx_new.vout[0].value = 50 * COIN
-    tx_new.vout[0].script_pubkey = Script()
-    # Genesis block pubkey
-    genesis_pubkey_hex = (
-        "5F1DF16B2B704C8A578D0BBAF74D385CDE12C11EE50455F3C438EF4C3FBCF649B6DE"
-        "611FEAE06279A60939E028A8D65C10B73071A6F16719274855FEB0FD8A6704"
-    )
-    genesis_pubkey_be = bytes.fromhex(genesis_pubkey_hex)
-    genesis_pubkey_le = bytes(reversed(genesis_pubkey_be))
-    tx_new.vout[0].script_pubkey.push_data(genesis_pubkey_le)
-    tx_new.vout[0].script_pubkey.push_opcode(OP_CHECKSIG)
-
-    block = Block()
-    block.transactions = [tx_new]
-    block.prev_block_hash = uint256(0)
-    block.merkle_root = block.build_merkle_tree()
-    block.version = 1
-    block.time = 1231006505  # Genesis block time
-    block.bits = 0x1D00FFFF
-    block.nonce = 2083236893
-
-    return block
 
 
 def parse_peers(peers_str: str) -> List[tuple]:
@@ -125,25 +86,29 @@ def main():
     print(f"Peers: {args.peers}")
     print("NOTE: Using in-memory storage - all data lost on container restart")
 
-    # Initialize chain with genesis block
-    chain = get_chain()
-    if chain.best_height < 0:
+    # Build the service graph; the node drives everything through it.
+    protocol.DEFAULT_PORT = port
+    event_bus = EventBus()
+    services = get_services(event_bus=event_bus)
+
+    # Initialize chain with genesis block (through the blockchain service).
+    if services.blockchain_service.get_best_height() < 0:
         print("\nInitializing blockchain with genesis block...")
-        genesis_block = create_genesis_block()
-        # Use accept_block for genesis block to properly initialize chain
-        if not chain.accept_block(genesis_block):
-            print("ERROR: Failed to accept genesis block")
+        result = services.blockchain_service.add_block(create_genesis_block())
+        if not result:
+            print(f"ERROR: Failed to accept genesis block: {result.error}")
             sys.exit(1)
+        chain = get_chain()
         print(
             f"Genesis block processed. Height: {chain.best_height}, "
-            f"Hash: {genesis_block.get_hash().get_hex()[:16]}"
+            f"Hash: {chain.get_best_hash().get_hex()[:16]}"
         )
 
     # Start network node
     print("\nStarting network node...")
-    success, error = start_node()
-    if not success:
-        print(f"ERROR: Failed to start node: {error}")
+    result = services.network_service.start(port=port)
+    if not result:
+        print(f"ERROR: Failed to start node: {result.error}")
         sys.exit(1)
     print("Network node started successfully")
 
@@ -162,8 +127,8 @@ def main():
                 addr = Address(ip_int, port_net, 1)
 
                 print(f"Connecting to {host}:{peer_port} ({ip})...")
-                node = connect_node(addr, timeout=5)
-                if node:
+                result = services.network_service.connect_peer(addr, timeout=5)
+                if result:
                     print(f"  ✓ Connected to {host}:{peer_port}")
                 else:
                     print(f"  ✗ Failed to connect to {host}:{peer_port}")
@@ -172,7 +137,7 @@ def main():
 
     # Start mining
     print("\nStarting mining...")
-    start_mining(node_id)  # Pass node_id to miner
+    services.mining_service.start_mining(node_id)
     print("Mining started")
 
     # Create periodic transactions - send coins randomly to other nodes
@@ -529,8 +494,8 @@ def main():
     # Signal handler for graceful shutdown
     def signal_handler(sig, frame):
         print(f"\n\n[Node {node_id}] Shutting down...")
-        stop_mining()
-        stop_node()
+        services.mining_service.stop_mining()
+        services.network_service.stop()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)

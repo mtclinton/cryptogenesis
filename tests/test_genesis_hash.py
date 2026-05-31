@@ -22,10 +22,7 @@ def test_genesis_construction_hashes_to_invariant():
     This pins the real correctness path (coinbase assembly, CompactSize
     serialization, merkle root, double-SHA256 header hash), not just a constant.
     """
-    import sys
+    from cryptogenesis.genesis import create_genesis_block
 
-    sys.argv = ["pytest"]
-    import run_node  # genesis factory (moves to cryptogenesis/genesis.py in Phase 7)
-
-    genesis = run_node.create_genesis_block()
+    genesis = create_genesis_block()
     assert genesis.get_hash().get_hex() == MAINNET_GENESIS_HASH

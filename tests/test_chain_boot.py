@@ -16,12 +16,9 @@ MAINNET_GENESIS_HASH = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b6
 
 
 def _genesis():
-    import sys
+    from cryptogenesis.genesis import create_genesis_block
 
-    sys.argv = ["pytest"]
-    import run_node
-
-    return run_node.create_genesis_block()
+    return create_genesis_block()
 
 
 def test_fresh_chain_starts_empty():

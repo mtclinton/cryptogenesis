@@ -630,15 +630,10 @@ def initialize_blockchain():
     # Create and accept genesis block
     print("Initializing blockchain with genesis block...")
 
-    # Import and use the same genesis block creation as run_node.py
-    import importlib.util
+    # Use the shared genesis factory (was: load run_node.py by file path).
+    from cryptogenesis.genesis import create_genesis_block
 
-    run_node_path = os.path.join(os.path.dirname(__file__), "run_node.py")
-    spec = importlib.util.spec_from_file_location("run_node", run_node_path)
-    run_node_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(run_node_module)
-
-    genesis_block = run_node_module.create_genesis_block()
+    genesis_block = create_genesis_block()
 
     # Use accept_block for genesis (same as run_node.py)
     if chain.accept_block(genesis_block):
