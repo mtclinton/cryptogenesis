@@ -183,9 +183,6 @@ class NetworkState:
             # Add address
             self._addresses.append(addr)
 
-            # Notify observers
-            self._notify_observers("address_added", addr)
-
             return True
 
     def remove_address(self, addr: Address) -> bool:
@@ -201,9 +198,6 @@ class NetworkState:
 
             # Remove address
             self._addresses.remove(addr)
-
-            # Notify observers
-            self._notify_observers("address_removed", addr)
 
             return True
 

@@ -507,50 +507,15 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
 
         # Debug: print we're in the loop (but not too often)
         if int(time.time()) % 10 == 0:  # Every 10 seconds
-            # Show correct height for private network
-            if get_network_mode() == "private":
-                try:
-                    import main
-                    global_services = main._global_services
-                    if global_services and global_services.blockchain_service:
-                        height = global_services.blockchain_service.blockchain_state.get_best_height()
-                        print(f"BitcoinMiner: Mining loop active (height: {height})")
-                    else:
-                        print("BitcoinMiner: Mining loop active (height: unknown)")
-                except:
-                    print("BitcoinMiner: Mining loop active (height: unknown)")
-            else:
-                print(f"BitcoinMiner: Mining loop active (height: {chain.best_height})")
+            print(f"BitcoinMiner: Mining loop active (height: {chain.best_height})")
 
-        # For private network, use simplified logic
-        from cryptogenesis.network import get_network_mode
-        if get_network_mode() == "private":
-            # For private network, just check if we have a blockchain
-            try:
-                import main
-                global_services = main._global_services
-                if global_services and global_services.blockchain_service:
-                    blockchain_height = global_services.blockchain_service.blockchain_state.get_best_height()
-                    if blockchain_height < 0:
-                        time.sleep(1.0)
-                        continue
-                    # Skip the complex chain logic for private network
-                    # Just proceed with mining using fixed parameters
-                    pindex_prev = None  # Will be handled specially below
-                else:
-                    time.sleep(1.0)
-                    continue
-            except (ImportError, AttributeError):
-                time.sleep(1.0)
-                continue
-        else:
-            # Use chain for mainnet
-            if chain.best_height < 0:
-                time.sleep(1.0)
-                continue
-            pindex_prev = chain.best_index
-            if not pindex_prev:
-                continue
+        # Wait until the chain has a genesis/tip to build on.
+        if chain.best_height < 0:
+            time.sleep(1.0)
+            continue
+        pindex_prev = chain.best_index
+        if not pindex_prev:
+            continue
 
         n_transactions_updated_last = n_transactions_updated
 
@@ -567,15 +532,8 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
                         time.sleep(sleep_time)
 
         # Get difficulty bits
-        if get_network_mode() == "private" and pindex_prev is None:
-            # For private network, use our configured difficulty
-            from cryptogenesis.config_private import PRIVATE_NETWORK_BITS
-            n_bits = PRIVATE_NETWORK_BITS
-            # Use genesis hash as prev_block_hash for first block
-            prev_block_hash = uint256(0)  # Genesis prev hash is all zeros
-        else:
-            n_bits = get_next_work_required(pindex_prev)
-            prev_block_hash = pindex_prev.block_hash
+        n_bits = get_next_work_required(pindex_prev)
+        prev_block_hash = pindex_prev.block_hash
 
         # Create coinbase and block
         bn_extra_nonce += 1
@@ -720,34 +678,8 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
                 print(f"  Block prev_hash: {block.prev_block_hash.get_hex()[:16]}")
                 print(f"  Block merkle_root: {block.merkle_root.get_hex()[:16]}")
 
-                # Handle private network differently
-                if get_network_mode() == "private":
-                    # For private network, add directly to blockchain_state
-                    try:
-                        import main
-                        global_services = main._global_services
-                        if global_services and global_services.blockchain_service:
-                            current_height = global_services.blockchain_service.blockchain_state.get_best_height()
-                            result = global_services.blockchain_service.add_block(block)
-                            if result.success:
-                                print(f"✅ Private network block accepted! New height: {current_height + 1}")
-                                # Publish block mined event
-                                if global_services.blockchain_service.event_bus:
-                                    from cryptogenesis.events import BlockMinedEvent
-                                    global_services.blockchain_service.event_bus.publish(BlockMinedEvent(block))
-                                process_result = True
-                            else:
-                                print(f"❌ Private network block rejected: {result.error}")
-                                process_result = False
-                        else:
-                            print("❌ No blockchain service for private network")
-                            process_result = False
-                    except Exception as e:
-                        print(f"❌ Error processing private network block: {e}")
-                        process_result = False
-                else:
-                    # Use chain validation for mainnet
-                    process_result = chain.process_block(block)
+                # Validate and connect the block through the chain.
+                process_result = chain.process_block(block)
 
                 if not process_result:
                     print(
@@ -781,22 +713,9 @@ def bitcoin_miner(node_id: Optional[int] = None) -> bool:
             if (block.nonce & 0x3FFFF) == 0:
                 if block.nonce == 0:
                     break
-                # Check if blockchain has changed
-                if get_network_mode() == "private":
-                    # For private network, check blockchain_state
-                    try:
-                        import main
-                        global_services = main._global_services
-                        if global_services and global_services.blockchain_service:
-                            current_height = global_services.blockchain_service.blockchain_state.get_best_height()
-                            if current_height != pindex_prev.height:
-                                break
-                    except (ImportError, AttributeError):
-                        pass
-                else:
-                    # For mainnet, check chain
-                    if pindex_prev != chain.best_index:
-                        break
+                # Check if the chain tip moved out from under us.
+                if pindex_prev != chain.best_index:
+                    break
                 if (
                     n_transactions_updated != n_transactions_updated_last
                     and get_time() - n_start > 60
